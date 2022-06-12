@@ -125,10 +125,16 @@ typedef enum service_type {
 
 /* "Unspecified" indicator value for servtabs (mainly used by v2 syntax) */
 #define SERVTAB_UNSPEC_VAL -1
+#define SERVTAB_UNSPEC_NICE_VAL INT_MAX /* not using -1 because it is valid
+                                           nice(1) value */
 
 #define SERVTAB_UNSPEC_SIZE_T SIZE_MAX
 
 #define SERVTAB_COUNT_MAX (SIZE_MAX - (size_t)1)
+
+/* "nice" range */
+#define NICE_MAX 20
+#define NICE_MIN -20
 
 /* Standard logging and debug print format for a servtab */
 #define SERV_FMT "%s/%s"
@@ -149,6 +155,7 @@ struct	servtab {
 	int	se_rpcprog;		/* rpc program number */
 	int	se_rpcversl;		/* rpc program lowest version */
 	int	se_rpcversh;		/* rpc program highest version */
+    int se_nice;        /* nice(1) value */
 #define isrpcservice(sep)	((sep)->se_rpcversl != 0)
 	pid_t	se_wait;		/* single threaded server */
 	short	se_checked;		/* looked at during merge */
