@@ -253,6 +253,16 @@ fill_default_values(struct servtab *sep)
 		is_valid = infer_protocol_ip_version(sep) && is_valid;
 	}
 
+	if (sep->se_path != NULL && sep->se_path_state 
+			== SERVTAB_UNSPEC_VAL) {
+		ENI("path_state");
+		is_valid = false;
+	} else if (sep->se_path_state != SERVTAB_UNSPEC_VAL &&
+			sep->se_path == NULL) {
+		ENI("path");
+		is_valid = false;
+	}
+
 #ifdef IPSEC
 	setup_ipsec(sep);
 #endif
@@ -1035,7 +1045,7 @@ nice_handler(struct servtab *sep, vlist values)
 	}
 
 	if (next_value(values) != NULL) {
-		TMA("ip_max");
+		TMA("nice");
 		return KEY_HANDLER_FAILURE;
 	}
 

@@ -1157,6 +1157,7 @@ init_servtab(void)
 		.se_service_max = SERVTAB_UNSPEC_SIZE_T,
 		.se_ip_max = SERVTAB_UNSPEC_SIZE_T,
 		.se_wait = SERVTAB_UNSPEC_VAL,
+		.se_path_state = SERVTAB_UNSPEC_VAL,
 		.se_socktype = SERVTAB_UNSPEC_VAL,
 		.se_rl_ip_list = SLIST_HEAD_INITIALIZER(se_ip_list_head),
         .se_nice = SERVTAB_UNSPEC_NICE_VAL
