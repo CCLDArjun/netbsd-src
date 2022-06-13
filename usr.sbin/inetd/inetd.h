@@ -155,7 +155,7 @@ struct	servtab {
 	int	se_rpcprog;		/* rpc program number */
 	int	se_rpcversl;		/* rpc program lowest version */
 	int	se_rpcversh;		/* rpc program highest version */
-    int se_nice;        /* nice(1) value */
+	int se_nice;        /* nice(1) value */
 #define isrpcservice(sep)	((sep)->se_rpcversl != 0)
 	pid_t	se_wait;		/* single threaded server */
 	short	se_checked;		/* looked at during merge */

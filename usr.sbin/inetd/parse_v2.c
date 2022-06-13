@@ -125,7 +125,7 @@ static struct key_handler {
 	{ "exec", exec_handler },
 	{ "args", args_handler },
 	{ "ip_max", ip_max_handler },
-    { "nice", nice_handler },
+	{ "nice", nice_handler },
 #ifdef IPSEC
 	{ "ipsec", ipsec_handler }
 #endif
@@ -1008,34 +1008,34 @@ ip_max_handler(struct servtab *sep, vlist values)
 static hresult
 nice_handler(struct servtab *sep, vlist values)
 {
-    if (sep->se_nice != SERVTAB_UNSPEC_NICE_VAL) {
-        TMD("nice");
-        return KEY_HANDLER_FAILURE;
-    }
-    
-    int rstatus;
-    char *nice_str = next_value(values);
+	if (sep->se_nice != SERVTAB_UNSPEC_NICE_VAL) {
+		TMD("nice");
+		return KEY_HANDLER_FAILURE;
+	}
+	
+	int rstatus;
+	char *nice_str = next_value(values);
 
-    if (nice_str == NULL) {
-        TFA("nice");
-        return KEY_HANDLER_FAILURE;
-    }
-    
-    int nice = (int) strtoi(nice_str, NULL, 10,
-        NICE_MIN, NICE_MAX, &rstatus);
+	if (nice_str == NULL) {
+		TFA("nice");
+		return KEY_HANDLER_FAILURE;
+	}
+	
+	int nice = (int) strtoi(nice_str, NULL, 10,
+		NICE_MIN, NICE_MAX, &rstatus);
 
-    if (rstatus != 0) {
-        ERR("Invalid nice '%s': %s", nice_str, strerror(rstatus));
-        return KEY_HANDLER_FAILURE;
-    }
+	if (rstatus != 0) {
+		ERR("Invalid nice '%s': %s", nice_str, strerror(rstatus));
+		return KEY_HANDLER_FAILURE;
+	}
 
-    if (next_value(values) != NULL) {
-        TMA("ip_max");
-        return KEY_HANDLER_FAILURE;
-    }
+	if (next_value(values) != NULL) {
+		TMA("ip_max");
+		return KEY_HANDLER_FAILURE;
+	}
 
-    sep->se_nice = nice;
-    return KEY_HANDLER_SUCCESS;
+	sep->se_nice = nice;
+	return KEY_HANDLER_SUCCESS;
 }
 
 /* Set user to execute as */
