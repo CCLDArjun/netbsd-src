@@ -77,12 +77,14 @@ static hresult	service_max_handler(struct servtab *, vlist);
 static hresult	ip_max_handler(struct servtab *, vlist);
 static hresult	nice_handler(struct servtab *, vlist);
 static hresult	protocol_handler(struct servtab *, vlist);
+static hresult	path_handler(struct servtab *, vlist);
+static hresult	path_state_handler(struct servtab *, vlist);
 static hresult	recv_buf_handler(struct servtab *, vlist);
 static hresult	send_buf_handler(struct servtab *, vlist);
 static hresult	socket_type_handler(struct servtab *, vlist);
 static hresult	unknown_handler(struct servtab *, vlist);
 static hresult	user_handler(struct servtab *, vlist);
-static hresult	wait_handler(struct servtab *, vlist);
+static hresult  wait_handler(struct servtab *, vlist);
 
 #ifdef IPSEC
 static hresult	ipsec_handler(struct servtab *, vlist);
@@ -125,7 +127,10 @@ static struct key_handler {
 	{ "exec", exec_handler },
 	{ "args", args_handler },
 	{ "ip_max", ip_max_handler },
+	/* added for non networking */
 	{ "nice", nice_handler },
+	{ "path_state", path_state_handler },
+	{ "path", path_handler },
 #ifdef IPSEC
 	{ "ipsec", ipsec_handler }
 #endif
@@ -1111,6 +1116,46 @@ exec_handler(struct servtab *sep, vlist values)
 
 	if ((val = next_value(values)) != NULL) {
 		TMA("exec");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	return KEY_HANDLER_SUCCESS;
+}
+
+static hresult
+path_handler(struct servtab *sep, vlist values)
+{
+	char *path = next_value(values);
+
+	if (path == NULL) {
+		TFA("path_state");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	sep->se_path = newstr(path);
+
+	if (next_value(values) != NULL) {
+		TMA("path_state");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	return KEY_HANDLER_SUCCESS;
+}
+
+static hresult
+path_state_handler(struct servtab *sep, vlist values)
+{
+	char *val = next_value(values);
+	
+	if (val == NULL) {
+		TFA("path_state");
+		return KEY_HANDLER_FAILURE;
+	} else if (strcmp(val, "yes") == 0) {
+		sep->se_path_state = true;
+	} else if (strcmp(val, "no") == 0) {
+		sep->se_path_state = false;
+	} else {
+		ERR("Invalid value '%s' for path_state. Valid: yes, no", val);
 		return KEY_HANDLER_FAILURE;
 	}
 
