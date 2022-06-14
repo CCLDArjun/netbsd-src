@@ -215,28 +215,38 @@ fill_default_values(struct servtab *sep)
 		sep->se_service_max = TOOMANY;
 	}
 
-	if (sep->se_hostaddr == NULL) {
-		/* Set hostaddr to default */
-		sep->se_hostaddr = newstr(defhost);
-	}
-
-	try_infer_socktype(sep);
-
 	if (sep->se_server == NULL) {
 		/* If an executable is not specified, assume internal. */
 		is_valid = setup_internal(sep) && is_valid;
 	}
 
-	if (sep->se_socktype == SERVTAB_UNSPEC_VAL) {
-		/* Ensure socktype is specified (either set or inferred) */
-		ENI("socktype");
-		is_valid = false;
-	}
+	if (sep->se_type != GENERAL_TYPE) {
+		if (sep->se_hostaddr == NULL) {
+			/* Set hostaddr to default */
+			sep->se_hostaddr = newstr(defhost);
+		}
 
-	if (sep->se_wait == SERVTAB_UNSPEC_VAL) {
-		/* Ensure wait is specified */
-		ENI("wait");
-		is_valid = false;
+		try_infer_socktype(sep);
+
+		if (sep->se_socktype == SERVTAB_UNSPEC_VAL) {
+			/* Ensure socktype is specified (either set or inferred) */
+			ENI("socktype");
+			is_valid = false;
+		}
+
+		if (sep->se_wait == SERVTAB_UNSPEC_VAL) {
+			/* Ensure wait is specified */
+			ENI("wait");
+			is_valid = false;
+		}
+
+		if (sep->se_proto == NULL) {
+			/* Ensure protocol is specified */
+			ENI("protocol");
+			is_valid = false;
+		} else {
+			is_valid = infer_protocol_ip_version(sep) && is_valid;
+		}
 	}
 
 	if (sep->se_user == NULL) {
@@ -245,14 +255,7 @@ fill_default_values(struct servtab *sep)
 		is_valid = false;
 	}
 
-	if (sep->se_proto == NULL) {
-		/* Ensure protocol is specified */
-		ENI("protocol");
-		is_valid = false;
-	} else {
-		is_valid = infer_protocol_ip_version(sep) && is_valid;
-	}
-
+	/* Ensure path and path_state are both given */
 	if (sep->se_path != NULL && sep->se_path_state 
 			== SERVTAB_UNSPEC_VAL) {
 		ENI("path_state");

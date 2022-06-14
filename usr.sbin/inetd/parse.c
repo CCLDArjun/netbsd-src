@@ -328,7 +328,12 @@ config(void)
 				if (sep->se_fd == -1 && !ISMUX(sep))
 					setup(sep);
 			}
+			break;
 		    }
+		case AF_UNSPEC:
+			if (sep->se_type == GENERAL_TYPE) {
+//				setup(sep); TODO: make GENERAL_TYPE setup-able
+			}
 		}
 	}
 	endconfig();
@@ -387,6 +392,7 @@ getconfigent(char **current_pos)
 	int argc, val;
 	char *cp, *cp0, *arg, *buf0, *buf1, *sz0, *sz1;
 	static char TCPMUX_TOKEN[] = "tcpmux/";
+	static char GENERAL_SERVICE_TOKEN[] = "general";
 #define MUX_LEN		(sizeof(TCPMUX_TOKEN)-1)
 	char *hostdelim;
 
@@ -506,6 +512,9 @@ more:
 		} else
 			sep->se_type = MUX_TYPE;
 		sep->se_service = newstr(c);
+	} else if (strcmp(arg, GENERAL_SERVICE_TOKEN) == 0) {
+		sep->se_service = newstr(arg);
+		sep->se_type = GENERAL_TYPE;
 	} else {
 		sep->se_service = newstr(arg);
 		sep->se_type = NORM_TYPE;

@@ -88,7 +88,8 @@ typedef enum service_type {
 	NORM_TYPE = 0,
 	MUX_TYPE = 1,
 	MUXPLUS_TYPE = 2,
-	FAITH_TYPE = 3
+	FAITH_TYPE = 3,
+	GENERAL_TYPE = 4
 } service_type;
 
 #define ISMUXPLUS(sep)	((sep)->se_type == MUXPLUS_TYPE)
