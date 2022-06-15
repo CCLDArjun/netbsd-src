@@ -249,6 +249,11 @@ fill_default_values(struct servtab *sep)
 		} else {
 			is_valid = infer_protocol_ip_version(sep) && is_valid;
 		}
+
+		if (sep->se_network_state == false) {
+			ERR("Cannot start network daemons with 'network_state = no'");
+			is_valid = false;
+		}
 	}
 
 	if (sep->se_user == NULL) {
