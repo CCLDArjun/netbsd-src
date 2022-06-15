@@ -83,6 +83,7 @@ static hresult	path_state_handler(struct servtab *, vlist);
 static hresult	recv_buf_handler(struct servtab *, vlist);
 static hresult	send_buf_handler(struct servtab *, vlist);
 static hresult	socket_type_handler(struct servtab *, vlist);
+static hresult	successful_exit_handler(struct servtab *, vlist);
 static hresult	unknown_handler(struct servtab *, vlist);
 static hresult	user_handler(struct servtab *, vlist);
 static hresult  wait_handler(struct servtab *, vlist);
@@ -132,7 +133,8 @@ static struct key_handler {
 	{ "nice", nice_handler },
 	{ "path_state", path_state_handler },
 	{ "path", path_handler },
-	{ "network_state", network_state_handler },	
+	{ "network_state", network_state_handler },
+	{ "successful_exit", successful_exit_handler },
 #ifdef IPSEC
 	{ "ipsec", ipsec_handler }
 #endif
@@ -336,7 +338,7 @@ infer_protocol_ip_version(struct servtab *sep)
 		&& strcmp("rpc/udp", sep->se_proto) != 0) {
 		return true;
 	}
-
+	printf("imhere\n");
 	if (inet_pton(AF_INET, sep->se_hostaddr, &tmp)) {
 		sep->se_family = AF_INET;
 		return true;
@@ -1162,6 +1164,7 @@ path_handler(struct servtab *sep, vlist values)
 	return KEY_HANDLER_SUCCESS;
 }
 
+
 static hresult
 network_state_handler(struct servtab *sep, vlist values)
 {
@@ -1176,6 +1179,27 @@ network_state_handler(struct servtab *sep, vlist values)
 		sep->se_network_state = false;
 	} else {
 		ERR("Invalid value '%s' for network_state. Valid: yes, no", val);
+		return KEY_HANDLER_FAILURE;
+	}
+
+	return KEY_HANDLER_SUCCESS;
+
+}
+
+static hresult
+successful_exit_handler(struct servtab *sep, vlist values)
+{
+	char *val = next_value(values);
+
+	if (val == NULL) {
+		TFA("successful_exit");
+		return KEY_HANDLER_FAILURE;
+	} else if (strcmp(val, "yes") == 0) {
+		sep->se_successful_exit = true;
+	} else if (strcmp(val, "no") == 0) {
+		sep->se_successful_exit = false;
+	} else {
+		ERR("Invalid value '%s' for successful_exit. Valid: yes, no", val);
 		return KEY_HANDLER_FAILURE;
 	}
 

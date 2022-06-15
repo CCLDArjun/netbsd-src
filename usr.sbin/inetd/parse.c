@@ -119,6 +119,7 @@ FILE	*fconfig;
 static struct	servtab serv;
 /* Current line from current config file */
 static char	line[LINE_MAX];
+static char GENERAL_SERVICE_TOKEN[] = "general";
 char    *defhost;
 #ifdef IPSEC
 char *policy;
@@ -209,6 +210,12 @@ config(void)
 		 * (in setup(servtab)).
 		 */
 		switch (sep->se_family) {
+		case AF_UNSPEC:
+			if (sep->se_type == GENERAL_TYPE) {
+//				setup(sep); TODO: make GENERAL_TYPE setup-able
+			}
+			break;
+
 		case AF_LOCAL:
 			if (sep->se_fd != -1)
 				break;
@@ -330,10 +337,6 @@ config(void)
 			}
 			break;
 		    }
-		case AF_UNSPEC:
-			if (sep->se_type == GENERAL_TYPE) {
-//				setup(sep); TODO: make GENERAL_TYPE setup-able
-			}
 		}
 	}
 	endconfig();
@@ -392,7 +395,6 @@ getconfigent(char **current_pos)
 	int argc, val;
 	char *cp, *cp0, *arg, *buf0, *buf1, *sz0, *sz1;
 	static char TCPMUX_TOKEN[] = "tcpmux/";
-	static char GENERAL_SERVICE_TOKEN[] = "general";
 #define MUX_LEN		(sizeof(TCPMUX_TOKEN)-1)
 	char *hostdelim;
 
@@ -515,6 +517,7 @@ more:
 	} else if (strcmp(arg, GENERAL_SERVICE_TOKEN) == 0) {
 		sep->se_service = newstr(arg);
 		sep->se_type = GENERAL_TYPE;
+		sep->se_family = AF_UNSPEC;
 	} else {
 		sep->se_service = newstr(arg);
 		sep->se_type = NORM_TYPE;
@@ -1001,6 +1004,12 @@ is_same_service(const struct servtab *sep, const struct servtab *cp)
 int
 parse_protocol(struct servtab *sep)
 {
+	if (sep->se_type == GENERAL_TYPE) {
+		ERR("'protocol' should not be specified for %s services", GENERAL_SERVICE_TOKEN);
+
+		return -1;
+	}
+
 	int val;
 
 	if (strcmp(sep->se_proto, "unix") == 0) {
@@ -1169,7 +1178,8 @@ init_servtab(void)
 		.se_path_state = SERVTAB_UNSPEC_VAL,
 		.se_socktype = SERVTAB_UNSPEC_VAL,
 		.se_rl_ip_list = SLIST_HEAD_INITIALIZER(se_ip_list_head),
-        .se_nice = SERVTAB_UNSPEC_NICE_VAL
+        .se_nice = SERVTAB_UNSPEC_NICE_VAL,
+		.se_network_state = SERVTAB_UNSPEC_VAL,
 		/* All other fields initialized to 0 or null */
 	};
 }
