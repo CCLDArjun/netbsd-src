@@ -159,6 +159,7 @@ struct	servtab {
 	int se_nice;        /* nice(1) value */
 	char	*se_path;
 	int	se_path_state;
+	int se_network_state;
 #define isrpcservice(sep)	((sep)->se_rpcversl != 0)
 	pid_t	se_wait;		/* single threaded server */
 	short	se_checked;		/* looked at during merge */

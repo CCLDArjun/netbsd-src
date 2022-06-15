@@ -75,6 +75,7 @@ static hresult	filter_handler(struct servtab *, vlist);
 static hresult	group_handler(struct servtab *, vlist);
 static hresult	service_max_handler(struct servtab *, vlist);
 static hresult	ip_max_handler(struct servtab *, vlist);
+static hresult  network_state_handler(struct servtab *, vlist);
 static hresult	nice_handler(struct servtab *, vlist);
 static hresult	protocol_handler(struct servtab *, vlist);
 static hresult	path_handler(struct servtab *, vlist);
@@ -131,6 +132,7 @@ static struct key_handler {
 	{ "nice", nice_handler },
 	{ "path_state", path_state_handler },
 	{ "path", path_handler },
+	{ "network_state", network_state_handler },	
 #ifdef IPSEC
 	{ "ipsec", ipsec_handler }
 #endif
@@ -1153,6 +1155,27 @@ path_handler(struct servtab *sep, vlist values)
 	}
 
 	return KEY_HANDLER_SUCCESS;
+}
+
+static hresult
+network_state_handler(struct servtab *sep, vlist values)
+{
+	char *val = next_value(values);
+
+	if (val == NULL) {
+		TFA("network_state");
+		return KEY_HANDLER_FAILURE;
+	} else if (strcmp(val, "yes") == 0) {
+		sep->se_network_state = true;
+	} else if (strcmp(val, "no") == 0) {
+		sep->se_network_state = false;
+	} else {
+		ERR("Invalid value '%s' for path_state. Valid: yes, no", val);
+		return KEY_HANDLER_FAILURE;
+	}
+
+	return KEY_HANDLER_SUCCESS;
+
 }
 
 static hresult
