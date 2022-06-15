@@ -1170,7 +1170,7 @@ network_state_handler(struct servtab *sep, vlist values)
 	} else if (strcmp(val, "no") == 0) {
 		sep->se_network_state = false;
 	} else {
-		ERR("Invalid value '%s' for path_state. Valid: yes, no", val);
+		ERR("Invalid value '%s' for network_state. Valid: yes, no", val);
 		return KEY_HANDLER_FAILURE;
 	}
 
