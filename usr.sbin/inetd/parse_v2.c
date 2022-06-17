@@ -75,6 +75,7 @@ static hresult	filter_handler(struct servtab *, vlist);
 static hresult	group_handler(struct servtab *, vlist);
 static hresult	service_max_handler(struct servtab *, vlist);
 static hresult	ip_max_handler(struct servtab *, vlist);
+static hresult	throttle_interval_handler(struct servtab *, vlist);
 static hresult  network_state_handler(struct servtab *, vlist);
 static hresult	nice_handler(struct servtab *, vlist);
 static hresult	protocol_handler(struct servtab *, vlist);
@@ -135,6 +136,7 @@ static struct key_handler {
 	{ "path", path_handler },
 	{ "network_state", network_state_handler },
 	{ "successful_exit", successful_exit_handler },
+	{ "throttle_interval", throttle_interval_handler },
 #ifdef IPSEC
 	{ "ipsec", ipsec_handler }
 #endif
@@ -1028,6 +1030,39 @@ ip_max_handler(struct servtab *sep, vlist values)
 
 	sep->se_ip_max = count;
 
+	return KEY_HANDLER_SUCCESS;
+}
+
+static hresult
+throttle_interval_handler(struct servtab *sep, vlist values)
+{
+	if (sep->se_throttle_interval != SERVTAB_UNSPEC_VAL) {
+		TMD("throttle_interval");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	int rstatus;
+	char *throttle_interval_str = next_value(values);
+
+	if (throttle_interval_str == NULL) {
+		TFA("throttle_interval");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	int throttle_interval = (int) strtoi(throttle_interval_str, NULL, 10,
+		0, INT_MAX, &rstatus);
+
+	if (rstatus != 0) {
+		ERR("Invalid throttle_interval '%s': %s", throttle_interval_str, strerror(rstatus));
+		return KEY_HANDLER_FAILURE;
+	}
+
+	if (next_value(values) != NULL) {
+		TMA("throttle_interval");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	sep->se_throttle_interval = throttle_interval;
 	return KEY_HANDLER_SUCCESS;
 }
 

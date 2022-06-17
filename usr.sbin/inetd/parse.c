@@ -1181,6 +1181,7 @@ init_servtab(void)
         .se_nice = SERVTAB_UNSPEC_NICE_VAL,
 		.se_network_state = SERVTAB_UNSPEC_VAL,
 		.se_successful_exit = SERVTAB_UNSPEC_VAL,
+		.se_throttle_interval = SERVTAB_UNSPEC_VAL,
 		/* All other fields initialized to 0 or null */
 	};
 }
