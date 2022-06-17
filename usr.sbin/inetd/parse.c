@@ -1180,6 +1180,7 @@ init_servtab(void)
 		.se_rl_ip_list = SLIST_HEAD_INITIALIZER(se_ip_list_head),
         .se_nice = SERVTAB_UNSPEC_NICE_VAL,
 		.se_network_state = SERVTAB_UNSPEC_VAL,
+		.se_successful_exit = SERVTAB_UNSPEC_VAL,
 		/* All other fields initialized to 0 or null */
 	};
 }

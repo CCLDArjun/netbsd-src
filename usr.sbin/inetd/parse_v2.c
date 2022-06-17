@@ -130,7 +130,7 @@ static struct key_handler {
 	{ "args", args_handler },
 	{ "ip_max", ip_max_handler },
 	/* added for non networking */
-	{ "nice", nice_handler },
+	{ "nice", nice_handler },  
 	{ "path_state", path_state_handler },
 	{ "path", path_handler },
 	{ "network_state", network_state_handler },
@@ -338,7 +338,7 @@ infer_protocol_ip_version(struct servtab *sep)
 		&& strcmp("rpc/udp", sep->se_proto) != 0) {
 		return true;
 	}
-	printf("imhere\n");
+
 	if (inet_pton(AF_INET, sep->se_hostaddr, &tmp)) {
 		sep->se_family = AF_INET;
 		return true;
@@ -1147,6 +1147,10 @@ exec_handler(struct servtab *sep, vlist values)
 static hresult
 path_handler(struct servtab *sep, vlist values)
 {
+	if (sep->se_path != NULL) {
+		TMD("path_state");
+		return KEY_HANDLER_FAILURE;
+	}
 	char *path = next_value(values);
 
 	if (path == NULL) {
@@ -1168,6 +1172,10 @@ path_handler(struct servtab *sep, vlist values)
 static hresult
 network_state_handler(struct servtab *sep, vlist values)
 {
+	if (sep->se_network_state != SERVTAB_UNSPEC_VAL) {
+		TMD("network_state");
+		return KEY_HANDLER_FAILURE;
+	}
 	char *val = next_value(values);
 
 	if (val == NULL) {
@@ -1189,6 +1197,11 @@ network_state_handler(struct servtab *sep, vlist values)
 static hresult
 successful_exit_handler(struct servtab *sep, vlist values)
 {
+	if (sep->se_successful_exit != SERVTAB_UNSPEC_VAL) {
+		TMD("successful_exit");
+		return KEY_HANDLER_FAILURE;
+	}
+
 	char *val = next_value(values);
 
 	if (val == NULL) {
@@ -1210,6 +1223,11 @@ successful_exit_handler(struct servtab *sep, vlist values)
 static hresult
 path_state_handler(struct servtab *sep, vlist values)
 {
+	if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
+		TMD("path_state");
+		return KEY_HANDLER_FAILURE;
+	}
+
 	char *val = next_value(values);
 	
 	if (val == NULL) {
