@@ -402,6 +402,7 @@ main(int argc, char *argv[])
 	}
 
 	for (n = 0; n < (int)__arraycount(my_signals); n++) {
+		/* initially add all kevents here */
 		int	signum;
 
 		signum = my_signals[n];
@@ -636,6 +637,12 @@ run_service(int ctrl, struct servtab *sep, int didfork)
 		if (rlim_ofile.rlim_cur != rlim_ofile_cur &&
 		    setrlimit(RLIMIT_NOFILE, &rlim_ofile) < 0)
 			syslog(LOG_ERR, "setrlimit: %m");
+		if (sep->se_nice != SERVTAB_UNSPEC_NICE_VAL) {
+			if (setpriority(PRIO_PROCESS, 0, sep->se_nice) == -1) {
+				syslog(LOG_ERR, "setpriority: %s", strerror(errno));
+			}
+		}
+
 		execv(sep->se_server, sep->se_argv);
 		syslog(LOG_ERR, "cannot execute %s: %m", sep->se_server);
 	reject:
