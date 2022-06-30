@@ -298,7 +298,8 @@ static int	port_good_dg(struct sockaddr *);
 static int	dg_broadcast(struct in_addr *);
 static int	my_kevent(const struct kevent *, size_t, struct kevent *, size_t);
 static struct kevent	*allocchange(void);
-static bool should_kill(struct servtab *sep);
+static bool should_kill(struct servtab *sep, int);
+static bool should_start(struct servtab *sep, int);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
 
@@ -460,13 +461,20 @@ main(int argc, char *argv[])
 			if ((int)ev->ident != sep->se_fd)
 				continue;
 
-			if (should_kill(sep)) {
+			/* access returns 0 on success */
+			int file_exists = access(sep->se_path, F_OK) == 0;
+
+			/* mainly for se_path */
+			if (should_kill(sep, file_exists)) {
 				kill(sep->se_path_pid, SIGKILL);
 				DPRINTF("killed process: %d", sep->se_path_pid);
+				continue;
+			} else if (!should_start(sep, file_exists)) {
 				continue;
 			}
 
 			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
+
 			if (sep->se_wait == 0 && sep->se_socktype == SOCK_STREAM) {
 				/* XXX here do the libwrap check-before-accept*/
 				ctrl = accept(sep->se_fd, NULL, NULL);
@@ -1671,12 +1679,12 @@ try_biltin(struct servtab *sep)
 }
 
 static bool
-should_kill(struct servtab *sep)
+should_kill(struct servtab *sep, int file_exists)
 {
 	if (sep->se_path_state == SERVTAB_UNSPEC_VAL || sep->se_path_pid == -1)
 		return false;
 
-	if (access(sep->se_path, F_OK) == 0) { // file exists!
+	if (file_exists) {
 		if (sep->se_path_state)
 			return false;
 		else
@@ -1686,6 +1694,25 @@ should_kill(struct servtab *sep)
 			return true;
 		else
 			return false;
+	}
+}
+
+static bool
+should_start(struct servtab *sep, int file_exists)
+{
+	if (sep->se_path_state == SERVTAB_UNSPEC_VAL || sep->se_path_pid == -1)
+		return true;
+
+	if (file_exists) {
+		if (sep->se_path_state)
+			return true;
+		else
+			return false;
+	} else {
+		if (sep->se_path_state)
+			return false;
+		else
+			return true;
 	}
 }
 
