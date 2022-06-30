@@ -159,6 +159,7 @@ struct	servtab {
 	int se_nice;        /* nice(1) value */
 	char	*se_path;
 	int	se_path_state;
+	pid_t	se_path_pid; /* keep track of path service pid */
 	int se_network_state;
 	int se_successful_exit;
 	int se_throttle_interval;

@@ -298,6 +298,7 @@ static int	port_good_dg(struct sockaddr *);
 static int	dg_broadcast(struct in_addr *);
 static int	my_kevent(const struct kevent *, size_t, struct kevent *, size_t);
 static struct kevent	*allocchange(void);
+static bool should_kill(struct servtab *sep);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
 
@@ -413,6 +414,7 @@ main(int argc, char *argv[])
 			struct kevent	*ev;
 
 			ev = allocchange();
+			syslog(LOG_INFO, "adding signal for %d", signum);
 			EV_SET(ev, signum, EVFILT_SIGNAL, EV_ADD | EV_ENABLE,
 			    0, 0, 0);
 		}
@@ -427,8 +429,9 @@ main(int argc, char *argv[])
 			reload = false;
 			config_root();
 		}
-
+		syslog(LOG_INFO,"calling kevent");
 		n = my_kevent(changebuf, changes, eventbuf, __arraycount(eventbuf));
+		syslog(LOG_INFO,"ending kevent call"); 
 		changes = 0;
 
 		for (ev = eventbuf; n > 0; ev++, n--) {
@@ -450,12 +453,19 @@ main(int argc, char *argv[])
 				}
 				continue;
 			}
-			if (ev->filter != EVFILT_READ)
+			if (ev->filter != EVFILT_READ && ev->filter != EVFILT_VNODE)
 				continue;
 			sep = (struct servtab *)ev->udata;
 			/* Paranoia */
 			if ((int)ev->ident != sep->se_fd)
 				continue;
+
+			if (should_kill(sep)) {
+				kill(sep->se_path_pid, SIGKILL);
+				DPRINTF("killed process: %d", sep->se_path_pid);
+				continue;
+			}
+
 			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
 			if (sep->se_wait == 0 && sep->se_socktype == SOCK_STREAM) {
 				/* XXX here do the libwrap check-before-accept*/
@@ -479,6 +489,7 @@ main(int argc, char *argv[])
 static void
 spawn(struct servtab *sep, int ctrl)
 {
+	syslog(LOG_INFO, "in spawn for %s", sep->se_service);
 	int dofork;
 	pid_t pid;
 
@@ -747,6 +758,27 @@ setup(struct servtab *sep)
 	int		off = 0;
 #endif
 	struct kevent	*ev;
+
+	if (sep->se_type == GENERAL_TYPE) {
+		if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
+			syslog(LOG_INFO, "setting up kevent for path state");
+			int fd = open(dirname(sep->se_path), O_DIRECTORY);
+			if (fd == -1) {
+				syslog(LOG_ERR, "open failed on %s: %s",
+						dirname(sep->se_path), strerror(errno));
+				return;
+			}
+
+			sep->se_fd = fd;
+			sep->se_path_pid = -1;
+
+			ev = allocchange();
+			EV_SET(ev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE, 
+				0, (intptr_t)sep);
+			// TODO: if the path already exists, start the program!
+		}
+		return;
+	}
 
 	if ((sep->se_fd = socket(sep->se_family, sep->se_socktype, 0)) < 0) {
 		DPRINTF("socket failed on " SERV_FMT ": %s",
@@ -1637,3 +1669,23 @@ try_biltin(struct servtab *sep)
 	}
 	return false;
 }
+
+static bool
+should_kill(struct servtab *sep)
+{
+	if (sep->se_path_state == SERVTAB_UNSPEC_VAL || sep->se_path_pid == -1)
+		return false;
+
+	if (access(sep->se_path, F_OK) == 0) { // file exists!
+		if (sep->se_path_state)
+			return false;
+		else
+			return true;
+	} else {
+		if (sep->se_path_state)
+			return true;
+		else
+			return false;
+	}
+}
+

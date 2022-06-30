@@ -212,7 +212,7 @@ config(void)
 		switch (sep->se_family) {
 		case AF_UNSPEC:
 			if (sep->se_type == GENERAL_TYPE) {
-//				setup(sep); TODO: make GENERAL_TYPE setup-able
+				setup(sep); // TODO: make GENERAL_TYPE setup-able
 			}
 			break;
 
