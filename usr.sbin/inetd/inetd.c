@@ -1700,8 +1700,10 @@ should_kill(struct servtab *sep, int file_exists)
 static bool
 should_start(struct servtab *sep, int file_exists)
 {
-	if (sep->se_path_state == SERVTAB_UNSPEC_VAL || sep->se_path_pid == -1)
+	if (sep->se_path_state == SERVTAB_UNSPEC_VAL)
 		return true;
+	if (sep->se_path_pid != -1)
+		return false;
 
 	if (file_exists) {
 		if (sep->se_path_state)
