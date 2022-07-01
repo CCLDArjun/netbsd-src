@@ -260,6 +260,7 @@ const int niflags = NI_NUMERICHOST | NI_NUMERICSERV;
 
 /* Reserve some descriptors, 3 stdio + at least: 1 log, 1 conf. file */
 #define FD_MARGIN	(8)
+
 rlim_t		rlim_ofile_cur = OPEN_MAX;
 
 struct rlimit	rlim_ofile;
@@ -300,6 +301,7 @@ static int	my_kevent(const struct kevent *, size_t, struct kevent *, size_t);
 static struct kevent	*allocchange(void);
 static bool should_kill(struct servtab *sep, int);
 static bool should_start(struct servtab *sep, int);
+static void update_path_pid(struct servtab *sep, int);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
 
@@ -430,9 +432,7 @@ main(int argc, char *argv[])
 			reload = false;
 			config_root();
 		}
-		syslog(LOG_INFO,"calling kevent");
 		n = my_kevent(changebuf, changes, eventbuf, __arraycount(eventbuf));
-		syslog(LOG_INFO,"ending kevent call"); 
 		changes = 0;
 
 		for (ev = eventbuf; n > 0; ev++, n--) {
@@ -454,7 +454,8 @@ main(int argc, char *argv[])
 				}
 				continue;
 			}
-			if (ev->filter != EVFILT_READ && ev->filter != EVFILT_VNODE)
+			if (ev->filter != EVFILT_READ && ev->filter != EVFILT_VNODE &&
+				ev->filter != EVFILT_TIMER)
 				continue;
 			sep = (struct servtab *)ev->udata;
 			/* Paranoia */
@@ -466,11 +467,15 @@ main(int argc, char *argv[])
 
 			/* mainly for se_path */
 			if (should_kill(sep, file_exists)) {
-				kill(sep->se_path_pid, SIGKILL);
+				kill(sep->se_path_pid, SIGTERM);
 				DPRINTF("killed process: %d", sep->se_path_pid);
 				continue;
 			} else if (!should_start(sep, file_exists)) {
+				syslog(LOG_INFO, "shouldn't start %s", sep->se_path);
 				continue;
+			} else if (ev->filter == EVFILT_VNODE) {
+				/* update se_path_pid if there is a file change */
+				update_path_pid(sep, file_exists);
 			}
 
 			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
@@ -519,14 +524,21 @@ spawn(struct servtab *sep, int ctrl)
 			sleep(1);
 			return;
 		}
-		if (pid != 0 && sep->se_wait != 0) {
-			struct kevent	*ev;
+		if (pid != 0) {
+			if (sep->se_wait != 0) {
+				struct kevent	*ev;
 
-			sep->se_wait = pid;
-			ev = allocchange();
-			EV_SET(ev, sep->se_fd, EVFILT_READ,
-			    EV_DELETE, 0, 0, 0);
+				sep->se_wait = pid;
+				ev = allocchange();
+				EV_SET(ev, sep->se_fd, EVFILT_READ,
+					EV_DELETE, 0, 0, 0);
+			} 
+			if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
+				DPRINTF("setting pid to %d", pid);
+				sep->se_path_pid = pid;
+			}
 		}
+
 		if (pid == 0) {
 			size_t	n;
 
@@ -683,7 +695,7 @@ reapchild(void)
 		if (pid <= 0)
 			break;
 		DPRINTF("%d reaped, status %#x", pid, status);
-		for (sep = servtab; sep != NULL; sep = sep->se_next)
+		for (sep = servtab; sep != NULL; sep = sep->se_next) {
 			if (sep->se_wait == pid) {
 				struct kevent	*ev;
 
@@ -702,6 +714,10 @@ reapchild(void)
 				DPRINTF("restored %s, fd %d",
 				    sep->se_service, sep->se_fd);
 			}
+
+			if (sep->se_path_pid == pid)
+				sep->se_path_pid = EXITED_AFTER_FILE_EXEC;
+		}
 	}
 }
 
@@ -778,12 +794,20 @@ setup(struct servtab *sep)
 			}
 
 			sep->se_fd = fd;
-			sep->se_path_pid = -1;
+			sep->se_path_pid = AWAITING_FILE_CREATION;
 
 			ev = allocchange();
 			EV_SET(ev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE, 
 				0, (intptr_t)sep);
-			// TODO: if the path already exists, start the program!
+
+			int file_exists = access(sep->se_path, F_OK) == 0;
+			if (should_start(sep, file_exists)) {
+				syslog(LOG_INFO, "should_start %s", sep->se_path);
+				ev = allocchange();
+				EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+					1, 0, (intptr_t)sep);
+				sep->se_path_pid = AWAITING_EXEC;
+			}
 		}
 		return;
 	}
@@ -1681,7 +1705,7 @@ try_biltin(struct servtab *sep)
 static bool
 should_kill(struct servtab *sep, int file_exists)
 {
-	if (sep->se_path_state == SERVTAB_UNSPEC_VAL || sep->se_path_pid == -1)
+	if (sep->se_path_state == SERVTAB_UNSPEC_VAL || sep->se_path_pid <= 0)
 		return false;
 
 	if (file_exists) {
@@ -1700,10 +1724,11 @@ should_kill(struct servtab *sep, int file_exists)
 static bool
 should_start(struct servtab *sep, int file_exists)
 {
-	if (sep->se_path_state == SERVTAB_UNSPEC_VAL)
+	if (sep->se_path_state == SERVTAB_UNSPEC_VAL ||
+		sep->se_path_pid == EXITED_AFTER_FILE_EXEC)
 		return true;
-	if (sep->se_path_pid != -1)
-		return false;
+	if (sep->se_path_pid == AWAITING_EXEC)
+		return true;
 
 	if (file_exists) {
 		if (sep->se_path_state)
@@ -1715,6 +1740,17 @@ should_start(struct servtab *sep, int file_exists)
 			return false;
 		else
 			return true;
+	}
+}
+
+static void
+update_path_pid(struct servtab *sep, int file_exists)
+{
+	if (sep->se_path_pid == AWAITING_EXEC)
+		return;
+	if (sep->se_path_pid == EXITED_AFTER_FILE_EXEC) {
+		if (sep->se_path_state && file_exists) 
+			sep->se_path_pid = AWAITING_EXEC;
 	}
 }
 

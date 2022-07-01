@@ -129,6 +129,11 @@ typedef enum service_type {
 #define SERVTAB_UNSPEC_NICE_VAL INT_MAX /* not using -1 because it is valid
                                            nice(1) value */
 
+/* to track files for services started by "path" */
+#define AWAITING_FILE_CREATION -2
+#define EXITED_AFTER_FILE_EXEC -3
+#define AWAITING_EXEC -4
+
 #define SERVTAB_UNSPEC_SIZE_T SIZE_MAX
 
 #define SERVTAB_COUNT_MAX (SIZE_MAX - (size_t)1)
@@ -144,6 +149,7 @@ typedef enum service_type {
 /* rate limiting macros */
 #define	CNT_INTVL	((time_t)60)	/* servers in CNT_INTVL sec. */
 #define	RETRYTIME	(60*10)		/* retry after bind or server fail */
+
 
 struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
