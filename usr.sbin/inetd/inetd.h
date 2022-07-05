@@ -129,10 +129,15 @@ typedef enum service_type {
 #define SERVTAB_UNSPEC_NICE_VAL INT_MAX /* not using -1 because it is valid
                                            nice(1) value */
 
-/* to track files for services started by "path" */
-#define AWAITING_FILE_CREATION -2
-#define EXITED_AFTER_FILE_EXEC -3
-#define AWAITING_EXEC -4
+/* to track files for services started by "path" in se_exec_path_state */
+typedef enum path_exec_state {
+	AWAITING_FILE_CREATION = 0,
+	AWAITING_FILE_DELETION = 1,
+	EXITED_AFTER_FILE_EXEC = 2,
+	AWAITING_EXEC = 3,
+	RUNNING = 4,
+	SHOULD_KILL = 5
+} path_exec_state;
 
 #define SERVTAB_UNSPEC_SIZE_T SIZE_MAX
 
@@ -166,6 +171,7 @@ struct	servtab {
 	char	*se_path;
 	int	se_path_state;
 	pid_t	se_path_pid; /* keep track of path service pid */
+	path_exec_state	se_path_exec_state;
 	int se_network_state;
 	int se_successful_exit;
 	int se_throttle_interval;
