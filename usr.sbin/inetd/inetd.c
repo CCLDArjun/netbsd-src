@@ -470,6 +470,8 @@ main(int argc, char *argv[])
 			/* for se_path */
 			if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
 				update_path_exec_state(sep, file_exists);
+				DPRINTF("new path_exec_state is %d", sep->se_path_exec_state);
+				DPRINTF("new file_exists: %d", file_exists);
 
 				if (sep->se_path_exec_state == SHOULD_KILL) {
 					kill(sep->se_path_pid, SIGTERM);
@@ -724,8 +726,10 @@ reapchild(void)
 					/* if killed by inetd */
 					sep->se_path_exec_state = sep->se_path_state ? 
 						AWAITING_FILE_CREATION : AWAITING_FILE_DELETION;
-				}
-				sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
+				} else
+					sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
+
+				DPRINTF("reapchild(): new path_exec_state is %d", sep->se_path_exec_state);
 			}
 		}
 	}
