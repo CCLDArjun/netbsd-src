@@ -823,7 +823,7 @@ setup(struct servtab *sep)
 			ev = allocchange();
 			EV_SET(ev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE, 
 				0, (intptr_t)sep);
-			//flush_changebuf();
+			flush_changebuf();
 
 			file_exists = access(sep->se_path, F_OK) == 0;
 			if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
@@ -1705,7 +1705,7 @@ my_kevent(const struct kevent *changelist, size_t nchanges,
 static void
 flush_changebuf(void)
 {
-	(void) my_kevent(changebuf, __arraycount(changebuf), NULL, 0);
+	(void) my_kevent(changebuf, changes, NULL, 0);
 	changes = 0;
 }
 
