@@ -504,7 +504,6 @@ main(int argc, char *argv[])
 static void
 spawn(struct servtab *sep, int ctrl)
 {
-	syslog(LOG_INFO, "in spawn for %s", sep->se_service);
 	int dofork;
 	pid_t pid;
 
@@ -1758,8 +1757,11 @@ update_exec_state(struct servtab *sep)
 		return;
 
 	int exit_status = sep->se_last_exit;
+	/* tell whether successful_exit wants to start the service */
 	bool successful_exit = (sep->se_successful_exit && exit_status != 0) ||
 	 (!sep->se_successful_exit && exit_status == 0);
+
+	/* set in config() to run immediatley */
 	if (exit_status == -1)
 		successful_exit = true;
 
@@ -1775,6 +1777,9 @@ update_exec_state(struct servtab *sep)
 	} else {
 		sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
 	}
+
+	if (successful_exit_spec && !successful_exit)
+		return;
 
 	if (path_state_spec) {
 		int file_exists = access(sep->se_path, F_OK) == 0;
