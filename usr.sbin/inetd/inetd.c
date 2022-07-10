@@ -465,20 +465,18 @@ main(int argc, char *argv[])
 			DPRINTF("path_exec_state is %d", sep->se_path_exec_state);
 			DPRINTF("file_exists: %d", file_exists);
 
-			/* for se_path */
-			if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
-				update_exec_state(sep);
-				DPRINTF("new path_exec_state is %d", sep->se_path_exec_state);
-				DPRINTF("new file_exists: %d", file_exists);
+			update_exec_state(sep);
 
-				if (sep->se_path_exec_state == SHOULD_KILL) {
-					kill(sep->se_path_pid, SIGTERM);
-					DPRINTF("killed process: %d", sep->se_path_pid);
-					continue;
-				} else if (sep->se_path_exec_state != AWAITING_EXEC) {
-					DPRINTF("continuing bc not awaiting exec");
-					continue;
-				}
+			DPRINTF("new path_exec_state is %d", sep->se_path_exec_state);
+			DPRINTF("new file_exists: %d", file_exists);
+
+			if (sep->se_path_exec_state == SHOULD_KILL) {
+				kill(sep->se_path_pid, SIGTERM);
+				DPRINTF("killed process: %d", sep->se_path_pid);
+				continue;
+			} else if (sep->se_path_exec_state != AWAITING_EXEC) {
+				DPRINTF("continuing bc not awaiting exec");
+				continue;
 			}
 
 
@@ -536,12 +534,10 @@ spawn(struct servtab *sep, int ctrl)
 				ev = allocchange();
 				EV_SET(ev, sep->se_fd, EVFILT_READ,
 					EV_DELETE, 0, 0, 0);
-			} 
-			if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
-				DPRINTF("setting pid to %d", pid);
-				sep->se_path_exec_state = RUNNING;
-				sep->se_path_pid = pid;
 			}
+			DPRINTF("setting pid to %d", pid);
+			sep->se_path_exec_state = RUNNING;
+			sep->se_path_pid = pid;
 		}
 
 		if (pid == 0) {
@@ -702,27 +698,23 @@ reapchild(void)
 		DPRINTF("%d reaped, status %#x", pid, status);
 		for (sep = servtab; sep != NULL; sep = sep->se_next) {
 			if (sep->se_path_pid == pid) {
-				if (sep->se_path_exec_state == SHOULD_KILL) {
-					/* if killed by inetd */
-					sep->se_path_exec_state = sep->se_path_state ?
-						AWAITING_FILE_CREATION : AWAITING_FILE_DELETION;
-				} else
-					sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
+				sep->se_last_exit = status;
+				update_exec_state(sep);
+
+				if (sep->se_path_exec_state == AWAITING_EXEC) {
+					struct kevent	*ev;
+					ev = allocchange();
+					EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+						1, 1, (intptr_t)sep);
+					flush_changebuf();
+				}
 
 				DPRINTF("reapchild(): new path_exec_state is %d", sep->se_path_exec_state);
 			}
 
 			if (sep->se_wait == pid) {
 				struct kevent	*ev;
-				sep->se_last_exit = status;
 
-				update_exec_state(sep);
-				if (sep->se_path_exec_state == AWAITING_EXEC) {
-					ev = allocchange();
-					EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
-						1, 0, (intptr_t)sep);
-					//flush_changebuf();
-				}
 
 				if (WIFEXITED(status) && WEXITSTATUS(status))
 					syslog(LOG_WARNING,
@@ -807,6 +799,7 @@ setup(struct servtab *sep)
 	struct kevent	*ev;
 
 	if (sep->se_type == GENERAL_TYPE) {
+		sep->se_last_exit = -1;
 		if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
 			syslog(LOG_INFO, "setting up kevent for path state");
 			int fd = open(dirname(sep->se_path), O_DIRECTORY);
@@ -842,6 +835,13 @@ setup(struct servtab *sep)
 					1, 1, (intptr_t)sep);
 				sep->se_path_exec_state = AWAITING_EXEC;
 			}
+		} else if (sep->se_successful_exit != SERVTAB_UNSPEC_VAL) {
+			sep->se_fd = 214891;
+			sep->se_path_exec_state = AWAITING_EXEC;
+			ev = allocchange();
+			EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+				1, 1, (intptr_t)sep);
+			flush_changebuf();
 		}
 		return;
 	}
@@ -1760,10 +1760,21 @@ update_exec_state(struct servtab *sep)
 	int exit_status = sep->se_last_exit;
 	bool successful_exit = (sep->se_successful_exit && exit_status != 0) ||
 	 (!sep->se_successful_exit && exit_status == 0);
+	if (exit_status == -1)
+		successful_exit = true;
 
 	/* see whether path_state and successful_exit are specified */
 	bool successful_exit_spec = sep->se_successful_exit != SERVTAB_UNSPEC_VAL;
 	bool path_state_spec = sep->se_path_state != SERVTAB_UNSPEC_VAL;
+
+	if (sep->se_path_exec_state == SHOULD_KILL) {
+		/* if killed by inetd */
+		sep->se_path_exec_state = sep->se_path_state ? AWAITING_FILE_CREATION
+			: AWAITING_FILE_DELETION;
+		return;
+	} else {
+		sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
+	}
 
 	if (path_state_spec) {
 		int file_exists = access(sep->se_path, F_OK) == 0;
