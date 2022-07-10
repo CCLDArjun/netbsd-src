@@ -300,7 +300,7 @@ static int	dg_broadcast(struct in_addr *);
 static int	my_kevent(const struct kevent *, size_t, struct kevent *, size_t);
 static struct kevent	*allocchange(void);
 static void flush_changebuf(void);
-static void update_path_exec_state(struct servtab *sep, int);
+static void update_exec_state(struct servtab *sep);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
 
@@ -461,15 +461,13 @@ main(int argc, char *argv[])
 			if ((int)ev->ident != sep->se_fd)
 				continue;
 
-			/* access returns 0 on success */
 			int file_exists = access(sep->se_path, F_OK) == 0;
-
 			DPRINTF("path_exec_state is %d", sep->se_path_exec_state);
 			DPRINTF("file_exists: %d", file_exists);
 
 			/* for se_path */
 			if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
-				update_path_exec_state(sep, file_exists);
+				update_exec_state(sep);
 				DPRINTF("new path_exec_state is %d", sep->se_path_exec_state);
 				DPRINTF("new file_exists: %d", file_exists);
 
@@ -482,6 +480,7 @@ main(int argc, char *argv[])
 					continue;
 				}
 			}
+
 
 			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
 
@@ -702,8 +701,28 @@ reapchild(void)
 			break;
 		DPRINTF("%d reaped, status %#x", pid, status);
 		for (sep = servtab; sep != NULL; sep = sep->se_next) {
+			if (sep->se_path_pid == pid) {
+				if (sep->se_path_exec_state == SHOULD_KILL) {
+					/* if killed by inetd */
+					sep->se_path_exec_state = sep->se_path_state ?
+						AWAITING_FILE_CREATION : AWAITING_FILE_DELETION;
+				} else
+					sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
+
+				DPRINTF("reapchild(): new path_exec_state is %d", sep->se_path_exec_state);
+			}
+
 			if (sep->se_wait == pid) {
 				struct kevent	*ev;
+				sep->se_last_exit = status;
+
+				update_exec_state(sep);
+				if (sep->se_path_exec_state == AWAITING_EXEC) {
+					ev = allocchange();
+					EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+						1, 0, (intptr_t)sep);
+					//flush_changebuf();
+				}
 
 				if (WIFEXITED(status) && WEXITSTATUS(status))
 					syslog(LOG_WARNING,
@@ -720,20 +739,10 @@ reapchild(void)
 				DPRINTF("restored %s, fd %d",
 				    sep->se_service, sep->se_fd);
 			}
-
-			if (sep->se_path_pid == pid) {
-				if (sep->se_path_exec_state == SHOULD_KILL) {
-					/* if killed by inetd */
-					sep->se_path_exec_state = sep->se_path_state ? 
-						AWAITING_FILE_CREATION : AWAITING_FILE_DELETION;
-				} else
-					sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
-
-				DPRINTF("reapchild(): new path_exec_state is %d", sep->se_path_exec_state);
-			}
 		}
 	}
 }
+
 
 static void
 retry(void)
@@ -816,7 +825,7 @@ setup(struct servtab *sep)
 				syslog(LOG_INFO, "should_start %s", sep->se_path);
 				ev = allocchange();
 				EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
-					1, 0, (intptr_t)sep);
+					1, 1, (intptr_t)sep);
 				sep->se_path_exec_state = AWAITING_EXEC;
 			}
 
@@ -830,7 +839,7 @@ setup(struct servtab *sep)
 				syslog(LOG_INFO, "should_start %s", sep->se_path);
 				ev = allocchange();
 				EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
-					1, 0, (intptr_t)sep);
+					1, 1, (intptr_t)sep);
 				sep->se_path_exec_state = AWAITING_EXEC;
 			}
 		}
@@ -1696,6 +1705,15 @@ my_kevent(const struct kevent *changelist, size_t nchanges,
 	    NULL)) < 0)
 		if (errno != EINTR) {
 			syslog(LOG_ERR, "kevent: %m");
+		if (errno == EACCES) DPRINTF("EACCES");
+		if (errno == EBADF) DPRINTF("2");
+		if (errno == EFAULT) DPRINTF("3");
+		if (errno == EINTR) DPRINTF("4");
+		if (errno == EINVAL) DPRINTF("5");
+		if (errno == ENOENT) DPRINTF("6");
+		if (errno == ENOMEM) DPRINTF("7");
+		if (errno == EOPNOTSUPP) DPRINTF("8");
+		if (errno == ESRCH) DPRINTF("9");
 			exit(EXIT_FAILURE);
 		}
 
@@ -1734,25 +1752,46 @@ try_biltin(struct servtab *sep)
 }
 
 static void
-update_path_exec_state(struct servtab *sep, int file_exists)
+update_exec_state(struct servtab *sep)
 {
 	if (sep->se_path_exec_state == AWAITING_EXEC)
 		return;
 
-	if (sep->se_path_state) {
-		if (!file_exists && sep->se_path_exec_state == EXITED_AFTER_FILE_EXEC)
-			sep->se_path_exec_state = AWAITING_FILE_CREATION;
-		if (file_exists && sep->se_path_exec_state == AWAITING_FILE_CREATION)
-			sep->se_path_exec_state = AWAITING_EXEC;
-		if (!file_exists && sep->se_path_exec_state == RUNNING)
-			sep->se_path_exec_state = SHOULD_KILL;
-	} else {
-		if (file_exists && sep->se_path_exec_state == EXITED_AFTER_FILE_EXEC)
-			sep->se_path_exec_state = AWAITING_FILE_DELETION;
-		if (!file_exists && sep->se_path_exec_state == AWAITING_FILE_DELETION)
-			sep->se_path_exec_state = AWAITING_EXEC;
-		if (file_exists && sep->se_path_exec_state == RUNNING)
-			sep->se_path_exec_state = SHOULD_KILL;
+	int exit_status = sep->se_last_exit;
+	bool successful_exit = (sep->se_successful_exit && exit_status != 0) ||
+	 (!sep->se_successful_exit && exit_status == 0);
+
+	/* see whether path_state and successful_exit are specified */
+	bool successful_exit_spec = sep->se_successful_exit != SERVTAB_UNSPEC_VAL;
+	bool path_state_spec = sep->se_path_state != SERVTAB_UNSPEC_VAL;
+
+	if (path_state_spec) {
+		int file_exists = access(sep->se_path, F_OK) == 0;
+		if (sep->se_path_state) {
+			if (successful_exit_spec && file_exists && successful_exit) {
+				sep->se_path_exec_state = AWAITING_EXEC;
+				return;
+			}
+			if (!file_exists && sep->se_path_exec_state == EXITED_AFTER_FILE_EXEC)
+				sep->se_path_exec_state = AWAITING_FILE_CREATION;
+			if (file_exists && sep->se_path_exec_state == AWAITING_FILE_CREATION)
+				sep->se_path_exec_state = AWAITING_EXEC;
+			if (!file_exists && sep->se_path_exec_state == RUNNING)
+				sep->se_path_exec_state = SHOULD_KILL;
+		} else {
+			if (successful_exit_spec && !file_exists && successful_exit) {
+				sep->se_path_exec_state = AWAITING_EXEC;
+				return;
+			}
+			if (file_exists && sep->se_path_exec_state == EXITED_AFTER_FILE_EXEC)
+				sep->se_path_exec_state = AWAITING_FILE_DELETION;
+			if (!file_exists && sep->se_path_exec_state == AWAITING_FILE_DELETION)
+				sep->se_path_exec_state = AWAITING_EXEC;
+			if (file_exists && sep->se_path_exec_state == RUNNING)
+				sep->se_path_exec_state = SHOULD_KILL;
+		}
+	} else if (successful_exit && sep->se_path_exec_state != RUNNING) {
+		sep->se_path_exec_state = AWAITING_EXEC;
 	}
 }
 
