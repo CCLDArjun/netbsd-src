@@ -303,6 +303,7 @@ static void flush_changebuf(void);
 static void update_exec_state(struct servtab *sep, bool);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
+static bool get_network_state(void);
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
@@ -1768,7 +1769,7 @@ update_exec_state(struct servtab *sep, bool killed)
 	/* see whether path_state and successful_exit are specified */
 	bool successful_exit_spec = sep->se_successful_exit != SERVTAB_UNSPEC_VAL;
 	bool path_state_spec = sep->se_path_state != SERVTAB_UNSPEC_VAL;
-
+7
 	if (killed) {
 		if (sep->se_path_exec_state == SHOULD_KILL) {
 			/* if killed by inetd */
@@ -1813,3 +1814,32 @@ update_exec_state(struct servtab *sep, bool killed)
 	}
 }
 
+static bool
+get_network_state(void)
+{
+	struct ifaddrs *ifa, *ifai;
+	bool up = false;
+
+	if (getifaddrs(&ifa) == -1) {
+		syslog(LOG_ERR, "getifaddrs: %s", strerror(errno));
+		return false;
+	}
+
+	for (ifai = ifa; ifai; ifai = ifai->ifa_next) {
+		if (!(ifai->ifa_flags & IFF_UP)) {
+			continue;
+		}
+		if (ifai->ifa_flags & IFF_LOOPBACK) {
+			continue;
+		}
+		if (ifai->ifa_addr->sa_family != AF_INET && ifai->ifa_addr->sa_family != AF_INET6) {
+			continue;
+		}
+		up = true;
+		break;
+	}
+
+	freeifaddrs(ifa);
+
+	return up;
+}
