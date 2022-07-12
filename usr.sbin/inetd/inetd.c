@@ -475,7 +475,8 @@ main(int argc, char *argv[])
 				kill(sep->se_path_pid, SIGTERM);
 				DPRINTF("killed process: %d", sep->se_path_pid);
 				continue;
-			} else if (sep->se_path_exec_state != AWAITING_EXEC) {
+			} else if (sep->se_path_exec_state != AWAITING_EXEC &&
+					 sep->se_path_exec_state != IGNORE) {
 				DPRINTF("continuing bc not awaiting exec");
 				continue;
 			}
@@ -535,9 +536,11 @@ spawn(struct servtab *sep, int ctrl)
 				EV_SET(ev, sep->se_fd, EVFILT_READ,
 					EV_DELETE, 0, 0, 0);
 			}
-			DPRINTF("setting pid to %d", pid);
-			sep->se_path_exec_state = RUNNING;
-			sep->se_path_pid = pid;
+			if (sep->se_path_exec_state != IGNORE) {
+				DPRINTF("setting pid to %d", pid);
+				sep->se_path_exec_state = RUNNING;
+				sep->se_path_pid = pid;
+			}
 		}
 
 		if (pid == 0) {
@@ -797,45 +800,11 @@ setup(struct servtab *sep)
 	int		off = 0;
 #endif
 	struct kevent	*ev;
+	sep->se_last_exit = -1;
 
-	if (sep->se_type == GENERAL_TYPE) {
-		sep->se_last_exit = -1;
-		if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
-			syslog(LOG_INFO, "setting up kevent for path state");
-			int fd = open(dirname(sep->se_path), O_DIRECTORY);
-			if (fd == -1) {
-				syslog(LOG_ERR, "open failed on %s: %s",
-						dirname(sep->se_path), strerror(errno));
-				return;
-			}
-
-			sep->se_fd = fd;
-			sep->se_path_exec_state = sep->se_path_state ? AWAITING_FILE_CREATION 
-				: AWAITING_FILE_DELETION;
-
-			int file_exists = access(sep->se_path, F_OK) == 0;
-			if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
-				syslog(LOG_INFO, "should_start %s", sep->se_path);
-				ev = allocchange();
-				EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
-					1, 1, (intptr_t)sep);
-				sep->se_path_exec_state = AWAITING_EXEC;
-			}
-
-			ev = allocchange();
-			EV_SET(ev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE, 
-				0, (intptr_t)sep);
-			flush_changebuf();
-
-			file_exists = access(sep->se_path, F_OK) == 0;
-			if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
-				syslog(LOG_INFO, "should_start %s", sep->se_path);
-				ev = allocchange();
-				EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
-					1, 1, (intptr_t)sep);
-				sep->se_path_exec_state = AWAITING_EXEC;
-			}
-		} else if (sep->se_successful_exit != SERVTAB_UNSPEC_VAL) {
+	if (sep->se_path_state == SERVTAB_UNSPEC_VAL) {
+		sep->se_path_exec_state = IGNORE;
+		if (sep->se_successful_exit != SERVTAB_UNSPEC_VAL) {
 			sep->se_fd = 214891;
 			sep->se_path_exec_state = AWAITING_EXEC;
 			ev = allocchange();
@@ -843,8 +812,45 @@ setup(struct servtab *sep)
 				1, 1, (intptr_t)sep);
 			flush_changebuf();
 		}
+	} else {
+		syslog(LOG_INFO, "setting up kevent for path state");
+		int fd = open(dirname(sep->se_path), O_DIRECTORY);
+		if (fd == -1) {
+			syslog(LOG_ERR, "open failed on %s: %s",
+					dirname(sep->se_path), strerror(errno));
+			return;
+		}
+
+		sep->se_fd = fd;
+		sep->se_path_exec_state = sep->se_path_state ? AWAITING_FILE_CREATION 
+			: AWAITING_FILE_DELETION;
+
+		int file_exists = access(sep->se_path, F_OK) == 0;
+		if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
+			syslog(LOG_INFO, "should_start %s", sep->se_path);
+			ev = allocchange();
+			EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+				1, 1, (intptr_t)sep);
+			sep->se_path_exec_state = AWAITING_EXEC;
+		}
+
+		ev = allocchange();
+		EV_SET(ev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE, 
+			0, (intptr_t)sep);
+		flush_changebuf();
+
+		file_exists = access(sep->se_path, F_OK) == 0;
+		if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
+			syslog(LOG_INFO, "should_start %s", sep->se_path);
+			ev = allocchange();
+			EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+				1, 1, (intptr_t)sep);
+			sep->se_path_exec_state = AWAITING_EXEC;
+		}
+	} 
+
+	if (sep->se_type == GENERAL_TYPE)
 		return;
-	}
 
 	if ((sep->se_fd = socket(sep->se_family, sep->se_socktype, 0)) < 0) {
 		DPRINTF("socket failed on " SERV_FMT ": %s",
@@ -1754,7 +1760,13 @@ try_biltin(struct servtab *sep)
 static void
 update_exec_state(struct servtab *sep, bool killed)
 {
-	if (sep->se_path_exec_state == AWAITING_EXEC)
+	if (sep->se_path_exec_state == IGNORE)
+		return;
+	bool network_exec_permission = true;
+	if (sep->se_network_state && !get_network_state())
+		network_exec_permission = false;
+
+	if (sep->se_path_exec_state == AWAITING_EXEC && network_exec_permission)
 		return;
 
 	int exit_status = sep->se_last_exit;
@@ -1771,15 +1783,17 @@ update_exec_state(struct servtab *sep, bool killed)
 	bool path_state_spec = sep->se_path_state != SERVTAB_UNSPEC_VAL;
 
 	if (killed) {
-		if (sep->se_path_exec_state == SHOULD_KILL) {
-			/* if killed by inetd */
-			sep->se_path_exec_state = sep->se_path_state ? AWAITING_FILE_CREATION
-				: AWAITING_FILE_DELETION;
-			return;
-		} else {
-			sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
+		if (path_state_spec) {
+			if (sep->se_path_exec_state == SHOULD_KILL) {
+				/* if killed by inetd */
+				sep->se_path_exec_state = sep->se_path_state ? AWAITING_FILE_CREATION
+					: AWAITING_FILE_DELETION;
+				return;
+			} else {
+				sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
+			}
 		}
-	} else if (sep->se_network_state && !get_network_state()) {
+	} else if (!network_exec_permission) {
 		return;
 	}
 

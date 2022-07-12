@@ -131,12 +131,13 @@ typedef enum service_type {
 
 /* to track files for services started by "path" in se_exec_path_state */
 typedef enum path_exec_state {
-	AWAITING_FILE_CREATION = 0,
-	AWAITING_FILE_DELETION = 1,
-	EXITED_AFTER_FILE_EXEC = 2,
-	AWAITING_EXEC = 3,
+	AWAITING_EXEC = 0,
+	AWAITING_FILE_CREATION = 1,
+	AWAITING_FILE_DELETION = 2,
+	EXITED_AFTER_FILE_EXEC = 3,
 	RUNNING = 4,
-	SHOULD_KILL = 5
+	SHOULD_KILL = 5,
+	IGNORE = 6 // if ignore is set, don't base logic off of path_exec_state.
 } path_exec_state;
 
 #define SERVTAB_UNSPEC_SIZE_T SIZE_MAX
