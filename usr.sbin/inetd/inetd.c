@@ -1769,7 +1769,7 @@ update_exec_state(struct servtab *sep, bool killed)
 	/* see whether path_state and successful_exit are specified */
 	bool successful_exit_spec = sep->se_successful_exit != SERVTAB_UNSPEC_VAL;
 	bool path_state_spec = sep->se_path_state != SERVTAB_UNSPEC_VAL;
-7
+
 	if (killed) {
 		if (sep->se_path_exec_state == SHOULD_KILL) {
 			/* if killed by inetd */
@@ -1779,6 +1779,8 @@ update_exec_state(struct servtab *sep, bool killed)
 		} else {
 			sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
 		}
+	} else if (sep->se_network_state && !get_network_state()) {
+		return;
 	}
 
 	if (successful_exit_spec && !successful_exit)
