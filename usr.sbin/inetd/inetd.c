@@ -304,6 +304,10 @@ static void update_exec_state(struct servtab *sep, bool);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
 static bool get_network_state(void);
+static int setup_inetdctl_sock(void);
+
+const char *inetd_ctrl_path = "/var/run/inetd.sock";
+#define INETDCTL_MAGIC	453
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
@@ -353,7 +357,7 @@ static int my_signals[] =
 int
 main(int argc, char *argv[])
 {
-	int		ch, n, reload = 1;
+	int		ch, n, reload = 1, s;
 
 	while ((ch = getopt(argc, argv,
 #ifdef LIBWRAP
@@ -404,6 +408,21 @@ main(int argc, char *argv[])
 		if (rlim_ofile_cur == RLIM_INFINITY)	/* ! */
 			rlim_ofile_cur = OPEN_MAX;
 	}
+
+	/* setup IPC for inetdctl */
+	if ((s = setup_inetdctl_sock()) < 0) {
+		syslog(LOG_ERR, "setting up ipc with inetdctl failed");
+		return EXIT_FAILURE;
+	} else {
+		struct kevent *ev;
+
+		ev = allocchange();
+		DPRINTF("adding kevent for inetdctl on %d", s);
+		EV_SET(ev, s, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0,
+			(intptr_t) INETDCTL_MAGIC);
+		flush_changebuf();
+	}
+
 
 	for (n = 0; n < (int)__arraycount(my_signals); n++) {
 		/* initially add all kevents here */
@@ -457,6 +476,9 @@ main(int argc, char *argv[])
 			if (ev->filter != EVFILT_READ && ev->filter != EVFILT_VNODE &&
 				ev->filter != EVFILT_TIMER)
 				continue;
+			if (ev->udata == INETDCTL_MAGIC) {
+				DPRINTF("GOT CONNECTION!");
+			}
 			sep = (struct servtab *)ev->udata;
 			/* Paranoia */
 			if ((int)ev->ident != sep->se_fd)
@@ -476,11 +498,10 @@ main(int argc, char *argv[])
 				DPRINTF("killed process: %d", sep->se_path_pid);
 				continue;
 			} else if (sep->se_path_exec_state != AWAITING_EXEC &&
-					 sep->se_path_exec_state != IGNORE) {
+				 sep->se_path_exec_state != IGNORE) {
 				DPRINTF("continuing bc not awaiting exec");
 				continue;
 			}
-
 
 			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
 
@@ -1859,3 +1880,31 @@ get_network_state(void)
 
 	return up;
 }
+
+static int
+setup_inetdctl_sock(void)
+{
+	int s;
+	struct sockaddr_un local;
+
+	if ((s = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0) {
+		syslog(LOG_ERR, "socket: %s", strerror(errno));
+		return -1;
+	}
+
+	local.sun_family = AF_UNIX;
+	strcpy(local.sun_path, inetd_ctrl_path);
+	unlink(local.sun_path);
+	if (bind(s, (struct sockaddr *) &local, sizeof(local)) < 0) {
+		syslog(LOG_ERR, "bind: %s", strerror(errno));
+		return -1;
+	}
+
+	if (listen(s, 5) < 0) {
+		syslog(LOG_ERR, "listen: %s", strerror(errno));
+		return -1;
+	}
+
+	return s;
+}
+
