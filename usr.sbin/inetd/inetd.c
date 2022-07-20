@@ -357,7 +357,7 @@ static int my_signals[] =
 int
 main(int argc, char *argv[])
 {
-	int		ch, n, reload = 1, s;
+	int		ch, n, reload = 1, ctl_sock;
 
 	while ((ch = getopt(argc, argv,
 #ifdef LIBWRAP
@@ -410,15 +410,15 @@ main(int argc, char *argv[])
 	}
 
 	/* setup IPC for inetdctl */
-	if ((s = setup_inetdctl_sock()) < 0) {
+	if ((ctl_sock = setup_inetdctl_sock()) < 0) {
 		syslog(LOG_ERR, "setting up ipc with inetdctl failed");
 		return EXIT_FAILURE;
 	} else {
 		struct kevent *ev;
 
 		ev = allocchange();
-		DPRINTF("adding kevent for inetdctl on %d", s);
-		EV_SET(ev, s, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0,
+		DPRINTF("adding kevent for inetdctl on %d", ctl_sock);
+		EV_SET(ev, ctl_sock, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0,
 			(intptr_t) INETDCTL_MAGIC);
 		flush_changebuf();
 	}
@@ -476,8 +476,33 @@ main(int argc, char *argv[])
 			if (ev->filter != EVFILT_READ && ev->filter != EVFILT_VNODE &&
 				ev->filter != EVFILT_TIMER)
 				continue;
-			if (ev->udata == INETDCTL_MAGIC) {
-				DPRINTF("GOT CONNECTION!");
+			if (ev->ident == (uintptr_t) ctl_sock) {
+				struct sockaddr_un remote;
+				socklen_t t;
+				int s2 = accept(ctl_sock, (struct sockaddr *) &remote, &t);
+				if (s2 == -1) {
+					syslog(LOG_ERR, "accept: %s", strerror(errno));
+					continue;
+				}
+
+				syslog(LOG_INFO, "reading from %s", inetd_ctrl_path);
+				char *line = NULL;
+				size_t linesize = 0;
+				ssize_t linelen;
+				FILE *fp;
+
+				if ((fp = fdopen(s2, "r")) == NULL) {
+					syslog(LOG_ERR, "fdopen: %s", strerror(errno));
+					continue;
+				}
+
+				while ((linelen = getline(&line, &linesize, fp)) != -1) {
+					DPRINTF("line is: %.*s", (int) linelen, line);
+				}
+
+				free(line);
+
+				continue;
 			}
 			sep = (struct servtab *)ev->udata;
 			/* Paranoia */
@@ -1887,7 +1912,7 @@ setup_inetdctl_sock(void)
 	int s;
 	struct sockaddr_un local;
 
-	if ((s = socket(AF_UNIX, SOCK_DGRAM, 0)) < 0) {
+	if ((s = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
 		syslog(LOG_ERR, "socket: %s", strerror(errno));
 		return -1;
 	}
