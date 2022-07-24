@@ -32,15 +32,24 @@ __RCSID("$NetBSD: inetdctl.c,v 1.0 2022/7/12 09:41:53 ccldarjun Exp $");
 #include <string.h>
 #include <unistd.h>
 
+#define CTRL_STATUS	1
+#define CTRL_START	2 
+#define CTRL_STOP	3 
+#define CTRL_LOAD	4 
+#define CTRL_UNLOAD 5
+
 __dead static void status_all(void);
 __dead static void usage(void);
 static void start(char *);
 static void stop(char *);
 static void load(char *);
 static void unload(char *);
+static void status(char *);
 static int inetd_ctrl_open(const char *);
 
 const char *inetd_ctrl_path = "/var/run/inetd.sock";
+int ctrl_sock;
+
 /*
  * describe what program does
  */
@@ -62,6 +71,9 @@ int main(int argc, char *argv[])
 	if (argc != 2)
 		usage();
 	
+	if ((ctrl_sock = inetd_ctrl_open(inetd_ctrl_path)) < 0)
+		exit(1);
+
 	if (strcmp(argv[0], "load") == 0)
 		load(argv[1]);
 	else if (strcmp(argv[0], "unload") == 0)
@@ -70,16 +82,27 @@ int main(int argc, char *argv[])
 		start(argv[1]);
 	else if (strcmp(argv[0], "stop") == 0)
 		stop(argv[1]);
+	else if (strcmp(argv[0], "status") == 0)
+		status(argv[1]);
 	else
 		usage();
 }
 
 static void
+status(char *service_name)
+{
+	char *str;
+	asprintf(&str, "%c\n%s\n", (char) CTRL_STATUS, service_name);
+	printf("sending %s", str);
+	if (send(ctrl_sock, str, strlen(str) + strlen(str + 2), 0) == -1)
+		perror("send");
+	close(ctrl_sock);
+	free(str);
+}
+
+static void
 load(char *service_name)
 {
-	printf("loading: %s", service_name);
-	int d = inetd_ctrl_open(inetd_ctrl_path);
-	printf("%d", d);
 }
 
 static void
@@ -118,40 +141,26 @@ usage(void)
 static int inetd_ctrl_open(const char * ctrl_path)
 {
 	int sock;
-	int tries = 0;
-	struct sockaddr_un addr, dest;
+	struct sockaddr_un remote;
 
-	sock = socket(AF_UNIX, SOCK_DGRAM, 0);
-	if (sock < 0) {
+	if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
 		fprintf(stderr, "socket: %s, errno: %d", strerror(errno), errno);
 		return sock;
 	}
 
-	memset(&addr, 0, sizeof(addr));
-	addr.sun_family = AF_UNIX;
-	if (strlen(ctrl_path) >= sizeof(addr.sun_path))
-		fprintf(stderr, "ctrl_path too long");
-	strcpy(addr.sun_path, ctrl_path);
+	fprintf(stderr, "trying to connect to %s\n", ctrl_path);
 
-try_again:
-	tries++;
-	if (bind(sock, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
-		fprintf(stderr, "bind: %s, errno: %d\n", strerror(errno), errno);
-		if (tries > 2) {
-			close(sock);
-			printf("too many tries, exiting\n");
-			return -1;
-		} else
-			goto try_again;
-	}
+	memset(&remote, 0, sizeof(struct sockaddr_un));
+	remote.sun_family = AF_UNIX;
+	strcpy(remote.sun_path, ctrl_path);
 
-	if (connect(sock, (struct sockaddr *) &dest, sizeof(dest)) < 0) {
+	if (connect(sock, (struct sockaddr *) &remote, SUN_LEN(&remote)) < 0) {
 		fprintf(stderr, "connect: %s, errno: %d\n", strerror(errno), errno);
 		close(sock);
-		unlink(addr.sun_path);
 		return -1;
 	}
 
+	fprintf(stderr, "connected\n");
 	return sock;
 }
 
