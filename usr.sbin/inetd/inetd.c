@@ -306,6 +306,8 @@ static void	spawn(struct servtab *, int);
 static bool get_network_state(void);
 static int setup_inetdctl_sock(void);
 static void handle_ctrl(FILE *);
+static struct servtab *find_servtab(char *arg);
+
 
 const char *inetd_ctrl_path = "/var/run/inetd.sock";
 #define INETDCTL_MAGIC	453
@@ -481,22 +483,20 @@ main(int argc, char *argv[])
 				struct sockaddr_un remote;
 				socklen_t t;
 				int s2 = accept(ctl_sock, (struct sockaddr *) &remote, &t);
+				FILE *fp;
 				if (s2 == -1) {
 					syslog(LOG_ERR, "accept: %s", strerror(errno));
 					continue;
 				}
-
 				syslog(LOG_INFO, "reading from %s", inetd_ctrl_path);
-				FILE *fp;
-
-				if ((fp = fdopen(s2, "r")) == NULL) {
+				if ((fp = fdopen(s2, "a+")) == NULL) {
 					syslog(LOG_ERR, "fdopen: %s", strerror(errno));
 					continue;
 				}
 
 				handle_ctrl(fp);
-
 				fclose(fp);
+				close(s2);
 				continue;
 			}
 			sep = (struct servtab *)ev->udata;
@@ -1934,37 +1934,56 @@ setup_inetdctl_sock(void)
 #define CTRL_LOAD	4 
 #define CTRL_UNLOAD 5
 
+static struct servtab *
+find_servtab(char *arg)
+{
+	for (struct servtab *sep = servtab; sep != NULL; sep = sep->se_next)
+		if (strcmp(arg, sep->se_service) == 0)
+			return sep;
+	return NULL;
+}
+
 static void
 handle_ctrl(FILE *fp)
 {
 	char *op = NULL, *arg = NULL;
-	size_t oplen = 0, arglen = 0;
+	size_t opbuflen = 0, argbuflen = 0;
+	ssize_t arglen, oplen;
+	struct servtab *sep;
 
-	if (getline(&op, &oplen, fp) < 0) {
-		syslog(LOG_ERR, "no lines in ctrl socket");
+	while ((oplen = getline(&op, &opbuflen, fp)) > 0) {
+		op[oplen - 1] = '\0';
+		if (op[0] == '\0') {
+			DPRINTF("exiting loop now");
+			goto exit;
+		}
+
+		arglen = getline(&arg, &argbuflen, fp);
+		arg[arglen - 1] = '\0';
+		DPRINTF("OP: %d, ARGLEN: %ld, ARG: %s", (int) op[0], arglen, arg);
+
+		switch (op[0]) {
+		case CTRL_STATUS:
+		case CTRL_START:
+		case CTRL_STOP:
+			if (!(sep = find_servtab(arg))) {
+				DPRINTF("wrote to sock");
+				fprintf(fp, "No such service: %s\n", arg);
+				continue;
+			}
+			break;
+		case CTRL_LOAD:
+			break;
+		case CTRL_UNLOAD:
+			break;
+		default:
+			syslog(LOG_ERR, "invalid operation on %s", inetd_ctrl_path);
+		}
 	}
-	if (getline(&arg, &arglen, fp) < 0) {
-		syslog(LOG_ERR, "no arg in ctrl socket");
-	}
-
-	DPRINTF("OP: %d, ARG: %s", (int) op[0], arg);
-
-	switch (op[0]) {
-	case CTRL_STATUS:
-		syslog(LOG_INFO, "getting status for %s", arg);
-		break;
-	case CTRL_START:
-		break;
-	case CTRL_STOP:
-		break;
-	case CTRL_LOAD:
-		break;
-	case CTRL_UNLOAD:
-		break;
-	default:
-		syslog(LOG_ERR, "invalid operation on %s", inetd_ctrl_path);
-	}
-
+exit:
+	DPRINTF("exiting handle_ctrl");
+	fprintf(fp, "\n");
+	fflush(fp);
 	free(op);
 	free(arg);
 }

@@ -45,10 +45,11 @@ static void stop(char *);
 static void load(char *);
 static void unload(char *);
 static void status(char *);
-static int inetd_ctrl_open(const char *);
+static FILE *inetd_ctrl_open(const char *);
+static void print_sock_resp(void);
 
 const char *inetd_ctrl_path = "/var/run/inetd.sock";
-int ctrl_sock;
+FILE *ctrl_sock;
 
 /*
  * describe what program does
@@ -68,36 +69,54 @@ int main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (argc != 2)
+	if (argc < 2)
 		usage();
 	
-	if ((ctrl_sock = inetd_ctrl_open(inetd_ctrl_path)) < 0)
-		exit(1);
+	if ((ctrl_sock = inetd_ctrl_open(inetd_ctrl_path)) == NULL) {
+		perror("fdopen");
+		exit(0);
+	}
 
-	if (strcmp(argv[0], "load") == 0)
-		load(argv[1]);
-	else if (strcmp(argv[0], "unload") == 0)
-		unload(argv[1]);
-	else if (strcmp(argv[0], "start") == 0)
-		start(argv[1]);
-	else if (strcmp(argv[0], "stop") == 0)
-		stop(argv[1]);
-	else if (strcmp(argv[0], "status") == 0)
-		status(argv[1]);
-	else
-		usage();
+	for (int i = 1; i < argc; ++i)
+		if (strcmp(argv[0], "load") == 0)
+			load(argv[i]);
+		else if (strcmp(argv[0], "unload") == 0)
+			unload(argv[i]);
+		else if (strcmp(argv[0], "start") == 0)
+			start(argv[i]);
+		else if (strcmp(argv[0], "stop") == 0)
+			stop(argv[i]);
+		else if (strcmp(argv[0], "status") == 0)
+			status(argv[i]);
+		else
+			usage();
+
+	print_sock_resp();
+	fclose(ctrl_sock);
+}
+
+static void
+print_sock_resp(void)
+{
+	fprintf(ctrl_sock, "\n");
+	char *resp = NULL;
+	size_t buflen = 0;
+	printf("waiting for inetd to respond\n");
+	while (getline(&resp, &buflen, ctrl_sock) > 0) {
+		if (resp[0] != '\n')
+			printf("%s", resp);
+		else
+			break;
+	}
+	free(resp);
 }
 
 static void
 status(char *service_name)
 {
-	char *str;
-	asprintf(&str, "%c\n%s\n", (char) CTRL_STATUS, service_name);
-	printf("sending %s", str);
-	if (send(ctrl_sock, str, strlen(str) + strlen(str + 2), 0) == -1)
-		perror("send");
-	close(ctrl_sock);
-	free(str);
+	fprintf(ctrl_sock, "%c\n%s\n", (char) CTRL_STATUS, service_name);
+	fflush(ctrl_sock);
+	printf("sending to inetd: %d\\n%s\\n\n", (int) CTRL_STATUS, service_name);
 }
 
 static void
@@ -138,14 +157,14 @@ usage(void)
 	exit(EXIT_FAILURE);
 }
 
-static int inetd_ctrl_open(const char * ctrl_path)
+static FILE *
+inetd_ctrl_open(const char * ctrl_path)
 {
 	int sock;
 	struct sockaddr_un remote;
 
 	if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
 		fprintf(stderr, "socket: %s, errno: %d", strerror(errno), errno);
-		return sock;
 	}
 
 	fprintf(stderr, "trying to connect to %s\n", ctrl_path);
@@ -157,10 +176,10 @@ static int inetd_ctrl_open(const char * ctrl_path)
 	if (connect(sock, (struct sockaddr *) &remote, SUN_LEN(&remote)) < 0) {
 		fprintf(stderr, "connect: %s, errno: %d\n", strerror(errno), errno);
 		close(sock);
-		return -1;
+		return NULL;
 	}
 
 	fprintf(stderr, "connected\n");
-	return sock;
+	return fdopen(sock, "a+");
 }
 
