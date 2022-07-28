@@ -1933,6 +1933,8 @@ setup_inetdctl_sock(void)
 #define CTRL_STOP	3 
 #define CTRL_LOAD	4 
 #define CTRL_UNLOAD 5
+#define NEEDS_SEP(X) (X) == CTRL_STATUS || (X) == CTRL_START || \
+   (X) == CTRL_STOP
 
 static struct servtab *
 find_servtab(char *arg)
@@ -1941,6 +1943,43 @@ find_servtab(char *arg)
 		if (strcmp(arg, sep->se_service) == 0)
 			return sep;
 	return NULL;
+}
+
+#define INDENT	"  "
+#define CPRINTF(fmt, ...) do {\
+	fprintf(fp, fmt "\n" __VA_OPT__(,) __VA_ARGS__);\
+} while (false)
+
+static void
+print_status(FILE *fp, struct servtab *sep)
+{
+	CPRINTF("Status of " SERV_FMT, SERV_PARAMS(sep));
+	if (sep->se_path_exec_state != IGNORE) {
+		switch (sep->se_path_exec_state) {
+		case AWAITING_EXEC:
+			CPRINTF("%11s: %s", "path state", "about to execute");
+			break;
+		case AWAITING_FILE_CREATION:
+			CPRINTF("%11s: %s", "path state", "awaiting file creation");
+			break;
+		case AWAITING_FILE_DELETION:
+			CPRINTF("%11s: %s", "path state", "awaiting file deletion");
+			break;
+		case EXITED_AFTER_FILE_EXEC:
+			if (sep->se_path_state)
+				CPRINTF("%11s: %s", "path state", "exited; will restart"
+						" after file is created again");
+			else
+				CPRINTF("%11s: %s", "path state", "exited; will restart"
+						" after file is deleted again");
+			break;
+		case SHOULD_KILL:
+			CPRINTF("%11s: %s", "path state", "about to kill");
+			break;
+		default:
+			break;
+		}
+	}
 }
 
 static void
@@ -1962,22 +2001,20 @@ handle_ctrl(FILE *fp)
 		arg[arglen - 1] = '\0';
 		DPRINTF("OP: %d, ARGLEN: %ld, ARG: %s", (int) op[0], arglen, arg);
 
-		switch (op[0]) {
-		case CTRL_STATUS:
-		case CTRL_START:
-		case CTRL_STOP:
+		if (NEEDS_SEP(op[0])) {
 			if (!(sep = find_servtab(arg))) {
 				DPRINTF("wrote to sock");
 				fprintf(fp, "No such service: %s\n", arg);
 				continue;
 			}
-			break;
-		case CTRL_LOAD:
-			break;
-		case CTRL_UNLOAD:
-			break;
-		default:
-			syslog(LOG_ERR, "invalid operation on %s", inetd_ctrl_path);
+			switch (op[0]) {
+			case CTRL_STATUS:
+				print_status(fp, sep);
+				break;
+			case CTRL_START:
+			case CTRL_STOP:
+				break;
+			}
 		}
 	}
 exit:
@@ -1987,4 +2024,7 @@ exit:
 	free(op);
 	free(arg);
 }
+
+#undef INDENT
+#undef CPRINTF
 

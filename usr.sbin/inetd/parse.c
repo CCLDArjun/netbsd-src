@@ -514,7 +514,7 @@ more:
 		} else
 			sep->se_type = MUX_TYPE;
 		sep->se_service = newstr(c);
-	} else if (strcmp(arg, GENERAL_SERVICE_TOKEN) == 0) {
+	} else if (!isdigit((int) arg[0])) {
 		sep->se_service = newstr(arg);
 		sep->se_type = GENERAL_TYPE;
 		sep->se_family = AF_UNSPEC;
