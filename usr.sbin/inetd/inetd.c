@@ -1957,24 +1957,26 @@ print_status(FILE *fp, struct servtab *sep)
 	if (sep->se_path_exec_state != IGNORE) {
 		switch (sep->se_path_exec_state) {
 		case AWAITING_EXEC:
-			CPRINTF("%11s: %s", "path state", "about to execute");
+			CPRINTF("%11s: about to execute", "path state");
 			break;
 		case AWAITING_FILE_CREATION:
-			CPRINTF("%11s: %s", "path state", "awaiting file creation");
+			CPRINTF("%11s: awaiting %s creation", "path state", 
+				    sep->se_path);
 			break;
 		case AWAITING_FILE_DELETION:
-			CPRINTF("%11s: %s", "path state", "awaiting file deletion");
+			CPRINTF("%11s: awaiting %s deletion", "path state",
+				    sep->se_path);
 			break;
 		case EXITED_AFTER_FILE_EXEC:
 			if (sep->se_path_state)
-				CPRINTF("%11s: %s", "path state", "exited; will restart"
-						" after file is created again");
+				CPRINTF("%11s: exited; will restart after file"
+					    " is created again", "path state");
 			else
 				CPRINTF("%11s: %s", "path state", "exited; will restart"
-						" after file is deleted again");
+					    " after file is deleted again");
 			break;
 		case SHOULD_KILL:
-			CPRINTF("%11s: %s", "path state", "about to kill");
+			CPRINTF("%11s: about to kill", "path state");
 			break;
 		default:
 			break;
