@@ -36,7 +36,8 @@ __RCSID("$NetBSD: inetdctl.c,v 1.0 2022/7/12 09:41:53 ccldarjun Exp $");
 #define CTRL_START	2 
 #define CTRL_STOP	3 
 #define CTRL_LOAD	4 
-#define CTRL_UNLOAD 5
+#define CTRL_UNLOAD 	5
+#define CTRL_EXIT	6
 
 __dead static void status_all(void);
 __dead static void usage(void);
@@ -77,6 +78,8 @@ int main(int argc, char *argv[])
 		exit(0);
 	}
 
+	setvbuf(ctrl_sock, NULL, _IONBF, 0);
+
 	for (int i = 1; i < argc; ++i)
 		if (strcmp(argv[0], "load") == 0)
 			load(argv[i]);
@@ -90,18 +93,20 @@ int main(int argc, char *argv[])
 			status(argv[i]);
 		else
 			usage();
-
+	/* write exit message */ 
+	fprintf(ctrl_sock, "%c fiwejfweoi\n", (char) CTRL_EXIT);
+	fflush(ctrl_sock);
 	print_sock_resp();
 	fclose(ctrl_sock);
+	fflush(stdout);
 }
 
 static void
 print_sock_resp(void)
 {
-	fprintf(ctrl_sock, "\n");
 	char *resp = NULL;
 	size_t buflen = 0;
-	printf("waiting for inetd to respond\n");
+	fprintf(stderr, "waiting for inetd to respond\n");
 	while (getline(&resp, &buflen, ctrl_sock) > 0) {
 		if (resp[0] != '\n')
 			printf("%s", resp);
@@ -115,7 +120,6 @@ static void
 status(char *service_name)
 {
 	fprintf(ctrl_sock, "%c\n%s\n", (char) CTRL_STATUS, service_name);
-	fflush(ctrl_sock);
 	printf("sending to inetd: %d\\n%s\\n\n", (int) CTRL_STATUS, service_name);
 }
 

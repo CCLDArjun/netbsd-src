@@ -488,11 +488,19 @@ main(int argc, char *argv[])
 					syslog(LOG_ERR, "accept: %s", strerror(errno));
 					continue;
 				}
+				int flags = fcntl(s2, F_GETFL, 0);
+				if (flags == -1)
+					perror("fcntl");
+				//flags |= O_NONBLOCK;
+				if (fcntl(s2, F_SETFL, flags) == -1)
+					perror("fcntl");
 				syslog(LOG_INFO, "reading from %s", inetd_ctrl_path);
 				if ((fp = fdopen(s2, "a+")) == NULL) {
 					syslog(LOG_ERR, "fdopen: %s", strerror(errno));
 					continue;
 				}
+
+				setvbuf(fp, NULL, _IONBF, 0);
 
 				handle_ctrl(fp);
 				fclose(fp);
@@ -1928,13 +1936,6 @@ setup_inetdctl_sock(void)
 	return s;
 }
 
-#define CTRL_STATUS	1
-#define CTRL_START	2 
-#define CTRL_STOP	3 
-#define CTRL_LOAD	4 
-#define CTRL_UNLOAD 5
-#define NEEDS_SEP(X) (X) == CTRL_STATUS || (X) == CTRL_START || \
-   (X) == CTRL_STOP
 
 static struct servtab *
 find_servtab(char *arg)
@@ -1960,20 +1961,14 @@ print_status(FILE *fp, struct servtab *sep)
 			CPRINTF("%11s: about to execute", "path state");
 			break;
 		case AWAITING_FILE_CREATION:
-			CPRINTF("%11s: awaiting %s creation", "path state", 
-				    sep->se_path);
-			break;
 		case AWAITING_FILE_DELETION:
-			CPRINTF("%11s: awaiting %s deletion", "path state",
-				    sep->se_path);
-			break;
 		case EXITED_AFTER_FILE_EXEC:
 			if (sep->se_path_state)
-				CPRINTF("%11s: exited; will restart after file"
-					    " is created again", "path state");
+				CPRINTF("%11s: awaiting %s (re)creation",
+				    "path state", sep->se_path);
 			else
-				CPRINTF("%11s: %s", "path state", "exited; will restart"
-					    " after file is deleted again");
+				CPRINTF("%11s: awaiting %s (re)deletion",
+				    "path state", sep->se_path);
 			break;
 		case SHOULD_KILL:
 			CPRINTF("%11s: about to kill", "path state");
@@ -1984,6 +1979,15 @@ print_status(FILE *fp, struct servtab *sep)
 	}
 }
 
+#define CTRL_STATUS	1
+#define CTRL_START	2 
+#define CTRL_STOP	3 
+#define CTRL_LOAD	4 
+#define CTRL_UNLOAD 	5
+#define CTRL_EXIT	6
+#define NEEDS_SEP(X) (X) == CTRL_STATUS || (X) == CTRL_START || \
+   (X) == CTRL_STOP
+
 static void
 handle_ctrl(FILE *fp)
 {
@@ -1992,13 +1996,21 @@ handle_ctrl(FILE *fp)
 	ssize_t arglen, oplen;
 	struct servtab *sep;
 
+	//sleep(1);
 	while ((oplen = getline(&op, &opbuflen, fp)) > 0) {
+	//	sleep(1);
+		DPRINTF("line: %d", (int) op[0]);
+		if (op[0] == CTRL_EXIT) {
+			DPRINTF("saw exit, exiting now");
+			goto exit;
+		}
 		op[oplen - 1] = '\0';
 		if (op[0] == '\0') {
 			DPRINTF("exiting loop now");
 			goto exit;
 		}
 
+		DPRINTF("getting line");
 		arglen = getline(&arg, &argbuflen, fp);
 		arg[arglen - 1] = '\0';
 		DPRINTF("OP: %d, ARGLEN: %ld, ARG: %s", (int) op[0], arglen, arg);
@@ -2009,9 +2021,11 @@ handle_ctrl(FILE *fp)
 				fprintf(fp, "No such service: %s\n", arg);
 				continue;
 			}
+			DPRINTF("got servtab");
 			switch (op[0]) {
 			case CTRL_STATUS:
 				print_status(fp, sep);
+				fflush(fp);
 				break;
 			case CTRL_START:
 			case CTRL_STOP:
