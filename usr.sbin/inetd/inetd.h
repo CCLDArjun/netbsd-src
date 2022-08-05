@@ -295,6 +295,8 @@ extern char	*policy;
 
 int	rl_process(struct servtab *, int);
 void	rl_clear_ip_list(struct servtab *);
+time_t	rl_time(void);
+
 
 /*
  * From parse_v2.c

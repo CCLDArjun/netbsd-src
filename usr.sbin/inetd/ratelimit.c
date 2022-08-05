@@ -55,7 +55,6 @@ union addr {
 };
 
 static void	rl_reset(struct servtab *, time_t);
-static time_t	rl_time(void);
 static void	rl_get_name(struct servtab *, int, union addr *);
 static void	rl_drop_connection(struct servtab *, int);
 static struct rl_ip_node	*rl_add(struct servtab *, union addr *);
@@ -221,7 +220,7 @@ rl_drop_connection(struct servtab *sep, int ctrl)
 	    SERV_PARAMS(sep));
 }
 
-static time_t
+time_t
 rl_time(void)
 {
 	struct timespec ts;

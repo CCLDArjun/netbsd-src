@@ -106,7 +106,7 @@ print_sock_resp(void)
 {
 	char *resp = NULL;
 	size_t buflen = 0;
-	fprintf(stderr, "waiting for inetd to respond\n");
+	fprintf(stderr, "response\n=============================================================\n");
 	while (getline(&resp, &buflen, ctrl_sock) > 0) {
 		if (resp[0] != '\n')
 			printf("%s", resp);

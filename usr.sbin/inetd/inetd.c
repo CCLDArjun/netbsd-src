@@ -1946,32 +1946,45 @@ find_servtab(char *arg)
 	return NULL;
 }
 
-#define INDENT	"  "
 #define CPRINTF(fmt, ...) do {\
 	fprintf(fp, fmt "\n" __VA_OPT__(,) __VA_ARGS__);\
 } while (false)
+#define WIDTH 16
 
 static void
 print_status(FILE *fp, struct servtab *sep)
 {
 	CPRINTF("Status of " SERV_FMT, SERV_PARAMS(sep));
+	time_t rl_diff = rl_time() - sep->se_time;
+	if (sep->se_count != 0 && rl_diff != 0)
+		CPRINTF("process has been started %ld times in the last %ld seconds",
+		    sep->se_count, rl_diff);
+
+	if (sep->se_last_exit != -1)
+		CPRINTF("%*s: %d", WIDTH, "last exit", sep->se_last_exit);
+	else if (sep->se_path_pid != -1)
+		CPRINTF("%*s: %d", WIDTH, "pid", sep->se_path_pid);
+	else if (!(sep->se_wait < 1))
+		CPRINTF("%*s: %d", WIDTH, "pid", sep->se_wait);
+
+	
 	if (sep->se_path_exec_state != IGNORE) {
 		switch (sep->se_path_exec_state) {
 		case AWAITING_EXEC:
-			CPRINTF("%11s: about to execute", "path state");
+			CPRINTF("%*s: about to execute", WIDTH, "path state");
 			break;
 		case AWAITING_FILE_CREATION:
 		case AWAITING_FILE_DELETION:
 		case EXITED_AFTER_FILE_EXEC:
 			if (sep->se_path_state)
-				CPRINTF("%11s: awaiting %s (re)creation",
+				CPRINTF("%*s: awaiting %s (re)creation", WIDTH,
 				    "path state", sep->se_path);
 			else
-				CPRINTF("%11s: awaiting %s (re)deletion",
+				CPRINTF("%*s: awaiting %s (re)deletion", WIDTH,
 				    "path state", sep->se_path);
 			break;
 		case SHOULD_KILL:
-			CPRINTF("%11s: about to kill", "path state");
+			CPRINTF("%*s: about to kill", WIDTH, "path state");
 			break;
 		default:
 			break;
@@ -2040,7 +2053,4 @@ exit:
 	free(op);
 	free(arg);
 }
-
-#undef INDENT
-#undef CPRINTF
 
