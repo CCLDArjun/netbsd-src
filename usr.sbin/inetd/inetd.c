@@ -303,6 +303,7 @@ static void flush_changebuf(void);
 static void update_exec_state(struct servtab *sep, bool);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
+static int 	spawns(struct servtab *sep);
 static bool get_network_state(void);
 static int setup_inetdctl_sock(void);
 static void handle_ctrl(FILE *);
@@ -446,7 +447,6 @@ main(int argc, char *argv[])
 	}
 
 	for (;;) {
-		int		ctrl;
 		struct kevent	eventbuf[64], *ev;
 		struct servtab	*sep;
 
@@ -532,24 +532,31 @@ main(int argc, char *argv[])
 			}
 
 			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
-
-			if (sep->se_wait == 0 && sep->se_socktype == SOCK_STREAM) {
-				/* XXX here do the libwrap check-before-accept*/
-				ctrl = accept(sep->se_fd, NULL, NULL);
-				DPRINTF(SERV_FMT ": accept, ctrl fd %d",
-				    SERV_PARAMS(sep), ctrl);
-				if (ctrl < 0) {
-					if (errno != EINTR)
-						syslog(LOG_WARNING,
-						    SERV_FMT ": accept: %m",
-						    SERV_PARAMS(sep));
-					continue;
-				}
-			} else
-				ctrl = sep->se_fd;
-			spawn(sep, ctrl);
+			spawns(sep);
 		}
 	}
+}
+
+static int 
+spawns(struct servtab *sep)
+{
+	int ctrl;
+	if (sep->se_wait == 0 && sep->se_socktype == SOCK_STREAM) {
+		/* XXX here do the libwrap check-before-accept*/
+		ctrl = accept(sep->se_fd, NULL, NULL);
+		DPRINTF(SERV_FMT ": accept, ctrl fd %d",
+		    SERV_PARAMS(sep), ctrl);
+		if (ctrl < 0) {
+			if (errno != EINTR)
+				syslog(LOG_WARNING,
+				    SERV_FMT ": accept: %m",
+				    SERV_PARAMS(sep));
+			return -1;
+		}
+	} else
+		ctrl = sep->se_fd;
+	spawn(sep, ctrl);
+	return 0;
 }
 
 static void
@@ -2041,7 +2048,14 @@ handle_ctrl(FILE *fp)
 				fflush(fp);
 				break;
 			case CTRL_START:
+				if (spawns(sep) != 0)
+					CPRINTF("cannot start process");
+				break;
 			case CTRL_STOP:
+				if (sep->se_path_pid != -1)
+					kill(sep->se_path_pid, SIGTERM);
+				else if (sep->se_wait != -1)
+					kill(sep->se_wait, SIGTERM);
 				break;
 			}
 		}
