@@ -309,9 +309,10 @@ static int setup_inetdctl_sock(void);
 static void handle_ctrl(FILE *);
 static struct servtab *find_servtab(char *arg);
 
-
 const char *inetd_ctrl_path = "/var/run/inetd.sock";
 #define INETDCTL_MAGIC	453
+
+const int ctrl_timer = 0;
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
@@ -763,7 +764,7 @@ reapchild(void)
 				if (sep->se_path_exec_state == AWAITING_EXEC) {
 					struct kevent	*ev;
 					ev = allocchange();
-					EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+					EV_SET(ev, ++ctrl_timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
 						1, 1, (intptr_t)sep);
 					flush_changebuf();
 				}
@@ -861,10 +862,10 @@ setup(struct servtab *sep)
 	if (sep->se_path_state == SERVTAB_UNSPEC_VAL) {
 		sep->se_path_exec_state = IGNORE;
 		if (sep->se_successful_exit != SERVTAB_UNSPEC_VAL) {
-			sep->se_fd = 214891;
+			sep->se_fd = ++ctrl_timer;
 			sep->se_path_exec_state = AWAITING_EXEC;
 			ev = allocchange();
-			EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+			EV_SET(ev, ++ctrl_timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
 				1, 1, (intptr_t)sep);
 			flush_changebuf();
 		}
@@ -885,7 +886,7 @@ setup(struct servtab *sep)
 		if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
 			syslog(LOG_INFO, "should_start %s", sep->se_path);
 			ev = allocchange();
-			EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+			EV_SET(ev, ++ctrl_timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
 				1, 1, (intptr_t)sep);
 			sep->se_path_exec_state = AWAITING_EXEC;
 		}
@@ -899,7 +900,7 @@ setup(struct servtab *sep)
 		if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
 			syslog(LOG_INFO, "should_start %s", sep->se_path);
 			ev = allocchange();
-			EV_SET(ev, fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+			EV_SET(ev, ++ctrl_timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
 				1, 1, (intptr_t)sep);
 			sep->se_path_exec_state = AWAITING_EXEC;
 		}
