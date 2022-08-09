@@ -510,8 +510,10 @@ main(int argc, char *argv[])
 			}
 			sep = (struct servtab *)ev->udata;
 			/* Paranoia */
-			if ((int)ev->ident != sep->se_fd)
+			if ((int)ev->ident != sep->se_fd) {
+				syslog(LOG_ERR, "kevent ident does not match fd!");
 				continue;
+			}
 
 			int file_exists = access(sep->se_path, F_OK) == 0;
 			DPRINTF("path_exec_state is %d", sep->se_path_exec_state);
@@ -764,7 +766,7 @@ reapchild(void)
 				if (sep->se_path_exec_state == AWAITING_EXEC) {
 					struct kevent	*ev;
 					ev = allocchange();
-					EV_SET(ev, ++ctrl_timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+					EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
 						1, 1, (intptr_t)sep);
 					flush_changebuf();
 				}
@@ -862,10 +864,12 @@ setup(struct servtab *sep)
 	if (sep->se_path_state == SERVTAB_UNSPEC_VAL) {
 		sep->se_path_exec_state = IGNORE;
 		if (sep->se_successful_exit != SERVTAB_UNSPEC_VAL) {
+			// TODO: test for successful_exit being used with network
+			// services
 			sep->se_fd = ++ctrl_timer;
 			sep->se_path_exec_state = AWAITING_EXEC;
 			ev = allocchange();
-			EV_SET(ev, ++ctrl_timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+			EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
 				1, 1, (intptr_t)sep);
 			flush_changebuf();
 		}
@@ -886,7 +890,7 @@ setup(struct servtab *sep)
 		if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
 			syslog(LOG_INFO, "should_start %s", sep->se_path);
 			ev = allocchange();
-			EV_SET(ev, ++ctrl_timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+			EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
 				1, 1, (intptr_t)sep);
 			sep->se_path_exec_state = AWAITING_EXEC;
 		}
@@ -900,7 +904,7 @@ setup(struct servtab *sep)
 		if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
 			syslog(LOG_INFO, "should_start %s", sep->se_path);
 			ev = allocchange();
-			EV_SET(ev, ++ctrl_timer, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+			EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
 				1, 1, (intptr_t)sep);
 			sep->se_path_exec_state = AWAITING_EXEC;
 		}
