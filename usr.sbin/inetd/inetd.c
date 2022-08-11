@@ -312,7 +312,7 @@ static struct servtab *find_servtab(char *arg);
 const char *inetd_ctrl_path = "/var/run/inetd.sock";
 #define INETDCTL_MAGIC	453
 
-const int ctrl_timer = 0;
+int ctrl_timer = 0;
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
