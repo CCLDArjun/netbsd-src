@@ -36,7 +36,7 @@ __RCSID("$NetBSD: inetdctl.c,v 1.0 2022/7/12 09:41:53 ccldarjun Exp $");
 #define CTRL_START	2 
 #define CTRL_STOP	3 
 #define CTRL_LOAD	4 
-#define CTRL_UNLOAD 	5
+#define CTRL_UNLOAD 5
 #define CTRL_EXIT	6
 
 __dead static void status_all(void);
@@ -126,21 +126,29 @@ status(char *service_name)
 static void
 load(char *service_name)
 {
+	fprintf(ctrl_sock, "%c\n%s\n", (char) CTRL_LOAD, service_name);
+	printf("sending to inetd: %d\\n%s\\n\n", (int) CTRL_LOAD, service_name);
 }
 
 static void
 unload(char *service_name)
 {
+	fprintf(ctrl_sock, "%c\n%s\n", (char) CTRL_UNLOAD, service_name);
+	printf("sending to inetd: %d\\n%s\\n\n", (int) CTRL_UNLOAD, service_name);
 }
 
 static void
 start(char *service_name)
 {
+	fprintf(ctrl_sock, "%c\n%s\n", (char) CTRL_START, service_name);
+	printf("sending to inetd: %d\\n%s\\n\n", (int) CTRL_START, service_name);
 }
 
 static void
 stop(char *service_name)
 {
+	fprintf(ctrl_sock, "%c\n%s\n", (char) CTRL_STOP, service_name);
+	printf("sending to inetd: %d\\n%s\\n\n", (int) CTRL_STOP, service_name);
 }
 
 static void
