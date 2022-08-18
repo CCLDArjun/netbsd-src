@@ -2050,7 +2050,6 @@ handle_ctrl(FILE *fp)
 			switch (op[0]) {
 			case CTRL_STATUS:
 				print_status(fp, sep);
-				fflush(fp);
 				break;
 			case CTRL_START:
 				if (spawns(sep) != 0)
@@ -2064,6 +2063,26 @@ handle_ctrl(FILE *fp)
 				break;
 			}
 		}
+
+		if (op[0] == CTRL_LOAD) {
+			const char *old_config = CONFIG;
+			struct servtab *old_start = sep = servtab;
+			servtab = NULL;
+			CONFIG = arg;
+			line_number = 0;
+
+			config_root();
+
+			while (sep->se_next) {
+				sep = sep->se_next;
+			}
+
+			sep->se_next = servtab;
+			servtab = old_start;
+
+			CONFIG = old_config;
+		}
+		fflush(fp);
 	}
 exit:
 	DPRINTF("exiting handle_ctrl");
