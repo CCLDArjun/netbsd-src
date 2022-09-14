@@ -1,7 +1,7 @@
 /* $NetBSD: inetdctl.c,v 1.00 2022/07/15 09:41:53 tnn Exp $ */
 
 /*
- * Copyright (c) 2022 Arjun <ccldarjun@icloud.com>
+ * Copyright (c)
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -16,7 +16,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: inetdctl.c,v 1.0 2022/7/12 09:41:53 ccldarjun Exp $");
+__RCSID("$NetBSD: inetdctl.c,v 1.0 2022/7/12 09:41:53 Exp $");
 
 #include <sys/un.h>
 #include <sys/socket.h>
