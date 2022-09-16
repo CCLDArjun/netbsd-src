@@ -2,7 +2,7 @@
 /* donated to the NetBSD project by Arjun Bemarkar as part of GSoC 2022 */
 
 /*
- * Copyright (c)
+ * Copyright (c) 2022 The NetBSD Foundation, Inc.
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
