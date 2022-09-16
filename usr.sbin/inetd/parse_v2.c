@@ -75,13 +75,19 @@ static hresult	filter_handler(struct servtab *, vlist);
 static hresult	group_handler(struct servtab *, vlist);
 static hresult	service_max_handler(struct servtab *, vlist);
 static hresult	ip_max_handler(struct servtab *, vlist);
+static hresult	throttle_interval_handler(struct servtab *, vlist);
+static hresult  network_state_handler(struct servtab *, vlist);
+static hresult	nice_handler(struct servtab *, vlist);
 static hresult	protocol_handler(struct servtab *, vlist);
+static hresult	path_handler(struct servtab *, vlist);
+static hresult	path_state_handler(struct servtab *, vlist);
 static hresult	recv_buf_handler(struct servtab *, vlist);
 static hresult	send_buf_handler(struct servtab *, vlist);
 static hresult	socket_type_handler(struct servtab *, vlist);
+static hresult	successful_exit_handler(struct servtab *, vlist);
 static hresult	unknown_handler(struct servtab *, vlist);
 static hresult	user_handler(struct servtab *, vlist);
-static hresult	wait_handler(struct servtab *, vlist);
+static hresult  wait_handler(struct servtab *, vlist);
 
 #ifdef IPSEC
 static hresult	ipsec_handler(struct servtab *, vlist);
@@ -124,6 +130,13 @@ static struct key_handler {
 	{ "exec", exec_handler },
 	{ "args", args_handler },
 	{ "ip_max", ip_max_handler },
+	/* added for non networking */
+	{ "nice", nice_handler },  
+	{ "path_state", path_state_handler },
+	{ "path", path_handler },
+	{ "network_state", network_state_handler },
+	{ "successful_exit", successful_exit_handler },
+	{ "throttle_interval", throttle_interval_handler },
 #ifdef IPSEC
 	{ "ipsec", ipsec_handler }
 #endif
@@ -208,28 +221,43 @@ fill_default_values(struct servtab *sep)
 		sep->se_service_max = TOOMANY;
 	}
 
-	if (sep->se_hostaddr == NULL) {
-		/* Set hostaddr to default */
-		sep->se_hostaddr = newstr(defhost);
-	}
-
-	try_infer_socktype(sep);
-
 	if (sep->se_server == NULL) {
 		/* If an executable is not specified, assume internal. */
 		is_valid = setup_internal(sep) && is_valid;
 	}
 
-	if (sep->se_socktype == SERVTAB_UNSPEC_VAL) {
-		/* Ensure socktype is specified (either set or inferred) */
-		ENI("socktype");
-		is_valid = false;
-	}
+	if (sep->se_type != GENERAL_TYPE) {
+		if (sep->se_hostaddr == NULL) {
+			/* Set hostaddr to default */
+			sep->se_hostaddr = newstr(defhost);
+		}
 
-	if (sep->se_wait == SERVTAB_UNSPEC_VAL) {
-		/* Ensure wait is specified */
-		ENI("wait");
-		is_valid = false;
+		try_infer_socktype(sep);
+
+		if (sep->se_socktype == SERVTAB_UNSPEC_VAL) {
+			/* Ensure socktype is specified (either set or inferred) */
+			ENI("socktype");
+			is_valid = false;
+		}
+
+		if (sep->se_wait == SERVTAB_UNSPEC_VAL) {
+			/* Ensure wait is specified */
+			ENI("wait");
+			is_valid = false;
+		}
+
+		if (sep->se_proto == NULL) {
+			/* Ensure protocol is specified */
+			ENI("protocol");
+			is_valid = false;
+		} else {
+			is_valid = infer_protocol_ip_version(sep) && is_valid;
+		}
+
+		if (sep->se_network_state == false) {
+			ERR("Cannot start network daemons with 'network_state = no'");
+			is_valid = false;
+		}
 	}
 
 	if (sep->se_user == NULL) {
@@ -238,12 +266,15 @@ fill_default_values(struct servtab *sep)
 		is_valid = false;
 	}
 
-	if (sep->se_proto == NULL) {
-		/* Ensure protocol is specified */
-		ENI("protocol");
+	/* Ensure path and path_state are both given */
+	if (sep->se_path != NULL && sep->se_path_state 
+			== SERVTAB_UNSPEC_VAL) {
+		ENI("path_state");
 		is_valid = false;
-	} else {
-		is_valid = infer_protocol_ip_version(sep) && is_valid;
+	} else if (sep->se_path_state != SERVTAB_UNSPEC_VAL &&
+			sep->se_path == NULL) {
+		ENI("path");
+		is_valid = false;
 	}
 
 #ifdef IPSEC
@@ -1002,6 +1033,73 @@ ip_max_handler(struct servtab *sep, vlist values)
 	return KEY_HANDLER_SUCCESS;
 }
 
+static hresult
+throttle_interval_handler(struct servtab *sep, vlist values)
+{
+	if (sep->se_throttle_interval != SERVTAB_UNSPEC_VAL) {
+		TMD("throttle_interval");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	int rstatus;
+	char *throttle_interval_str = next_value(values);
+
+	if (throttle_interval_str == NULL) {
+		TFA("throttle_interval");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	int throttle_interval = (int) strtoi(throttle_interval_str, NULL, 10,
+		0, INT_MAX, &rstatus);
+
+	if (rstatus != 0) {
+		ERR("Invalid throttle_interval '%s': %s", throttle_interval_str, strerror(rstatus));
+		return KEY_HANDLER_FAILURE;
+	}
+
+	if (next_value(values) != NULL) {
+		TMA("throttle_interval");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	sep->se_throttle_interval = throttle_interval;
+	return KEY_HANDLER_SUCCESS;
+}
+
+/* Set nice value */
+static hresult
+nice_handler(struct servtab *sep, vlist values)
+{
+	if (sep->se_nice != SERVTAB_UNSPEC_NICE_VAL) {
+		TMD("nice");
+		return KEY_HANDLER_FAILURE;
+	}
+	
+	int rstatus;
+	char *nice_str = next_value(values);
+
+	if (nice_str == NULL) {
+		TFA("nice");
+		return KEY_HANDLER_FAILURE;
+	}
+	
+	int nice = (int) strtoi(nice_str, NULL, 10,
+		NICE_MIN, NICE_MAX, &rstatus);
+
+	if (rstatus != 0) {
+		ERR("Invalid nice '%s': %s", nice_str, strerror(rstatus));
+		return KEY_HANDLER_FAILURE;
+	}
+
+	if (next_value(values) != NULL) {
+		TMA("nice");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	sep->se_nice = nice;
+	return KEY_HANDLER_SUCCESS;
+}
+
 /* Set user to execute as */
 static hresult
 user_handler(struct servtab *sep, vlist values)
@@ -1075,6 +1173,107 @@ exec_handler(struct servtab *sep, vlist values)
 
 	if ((val = next_value(values)) != NULL) {
 		TMA("exec");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	return KEY_HANDLER_SUCCESS;
+}
+
+static hresult
+path_handler(struct servtab *sep, vlist values)
+{
+	if (sep->se_path != NULL) {
+		TMD("path_state");
+		return KEY_HANDLER_FAILURE;
+	}
+	char *path = next_value(values);
+
+	if (path == NULL) {
+		TFA("path_state");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	sep->se_path = newstr(path);
+
+	if (next_value(values) != NULL) {
+		TMA("path_state");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	return KEY_HANDLER_SUCCESS;
+}
+
+
+static hresult
+network_state_handler(struct servtab *sep, vlist values)
+{
+	if (sep->se_network_state != SERVTAB_UNSPEC_VAL) {
+		TMD("network_state");
+		return KEY_HANDLER_FAILURE;
+	}
+	char *val = next_value(values);
+
+	if (val == NULL) {
+		TFA("network_state");
+		return KEY_HANDLER_FAILURE;
+	} else if (strcmp(val, "yes") == 0) {
+		sep->se_network_state = true;
+	} else if (strcmp(val, "no") == 0) {
+		sep->se_network_state = false;
+	} else {
+		ERR("Invalid value '%s' for network_state. Valid: yes, no", val);
+		return KEY_HANDLER_FAILURE;
+	}
+
+	return KEY_HANDLER_SUCCESS;
+
+}
+
+static hresult
+successful_exit_handler(struct servtab *sep, vlist values)
+{
+	if (sep->se_successful_exit != SERVTAB_UNSPEC_VAL) {
+		TMD("successful_exit");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	char *val = next_value(values);
+
+	if (val == NULL) {
+		TFA("successful_exit");
+		return KEY_HANDLER_FAILURE;
+	} else if (strcmp(val, "yes") == 0) {
+		sep->se_successful_exit = true;
+	} else if (strcmp(val, "no") == 0) {
+		sep->se_successful_exit = false;
+	} else {
+		ERR("Invalid value '%s' for successful_exit. Valid: yes, no", val);
+		return KEY_HANDLER_FAILURE;
+	}
+
+	return KEY_HANDLER_SUCCESS;
+
+}
+
+static hresult
+path_state_handler(struct servtab *sep, vlist values)
+{
+	if (sep->se_path_state != SERVTAB_UNSPEC_VAL) {
+		TMD("path_state");
+		return KEY_HANDLER_FAILURE;
+	}
+
+	char *val = next_value(values);
+	
+	if (val == NULL) {
+		TFA("path_state");
+		return KEY_HANDLER_FAILURE;
+	} else if (strcmp(val, "yes") == 0) {
+		sep->se_path_state = true;
+	} else if (strcmp(val, "no") == 0) {
+		sep->se_path_state = false;
+	} else {
+		ERR("Invalid value '%s' for path_state. Valid: yes, no", val);
 		return KEY_HANDLER_FAILURE;
 	}
 

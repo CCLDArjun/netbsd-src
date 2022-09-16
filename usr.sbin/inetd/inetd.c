@@ -260,6 +260,7 @@ const int niflags = NI_NUMERICHOST | NI_NUMERICSERV;
 
 /* Reserve some descriptors, 3 stdio + at least: 1 log, 1 conf. file */
 #define FD_MARGIN	(8)
+
 rlim_t		rlim_ofile_cur = OPEN_MAX;
 
 struct rlimit	rlim_ofile;
@@ -298,8 +299,20 @@ static int	port_good_dg(struct sockaddr *);
 static int	dg_broadcast(struct in_addr *);
 static int	my_kevent(const struct kevent *, size_t, struct kevent *, size_t);
 static struct kevent	*allocchange(void);
+static void flush_changebuf(void);
+static void update_exec_state(struct servtab *sep, bool);
 static int	get_line(int, char *, int);
 static void	spawn(struct servtab *, int);
+static int 	spawns(struct servtab *sep);
+static bool get_network_state(void);
+static int setup_inetdctl_sock(void);
+static void handle_ctrl(FILE *);
+static struct servtab *find_servtab(char *arg);
+
+const char *inetd_ctrl_path = "/var/run/inetd.sock";
+#define INETDCTL_MAGIC	453
+
+int ctrl_timer = 0;
 
 struct biltin {
 	const char *bi_service;		/* internally provided service name */
@@ -349,7 +362,7 @@ static int my_signals[] =
 int
 main(int argc, char *argv[])
 {
-	int		ch, n, reload = 1;
+	int		ch, n, reload = 1, ctl_sock;
 
 	while ((ch = getopt(argc, argv,
 #ifdef LIBWRAP
@@ -401,7 +414,23 @@ main(int argc, char *argv[])
 			rlim_ofile_cur = OPEN_MAX;
 	}
 
+	/* setup IPC for inetdctl */
+	if ((ctl_sock = setup_inetdctl_sock()) < 0) {
+		syslog(LOG_ERR, "setting up ipc with inetdctl failed");
+		return EXIT_FAILURE;
+	} else {
+		struct kevent *ev;
+
+		ev = allocchange();
+		DPRINTF("adding kevent for inetdctl on %d", ctl_sock);
+		EV_SET(ev, ctl_sock, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0,
+			(intptr_t) INETDCTL_MAGIC);
+		flush_changebuf();
+	}
+
+
 	for (n = 0; n < (int)__arraycount(my_signals); n++) {
+		/* initially add all kevents here */
 		int	signum;
 
 		signum = my_signals[n];
@@ -412,13 +441,13 @@ main(int argc, char *argv[])
 			struct kevent	*ev;
 
 			ev = allocchange();
+			syslog(LOG_INFO, "adding signal for %d", signum);
 			EV_SET(ev, signum, EVFILT_SIGNAL, EV_ADD | EV_ENABLE,
 			    0, 0, 0);
 		}
 	}
 
 	for (;;) {
-		int		ctrl;
 		struct kevent	eventbuf[64], *ev;
 		struct servtab	*sep;
 
@@ -426,7 +455,6 @@ main(int argc, char *argv[])
 			reload = false;
 			config_root();
 		}
-
 		n = my_kevent(changebuf, changes, eventbuf, __arraycount(eventbuf));
 		changes = 0;
 
@@ -449,30 +477,89 @@ main(int argc, char *argv[])
 				}
 				continue;
 			}
-			if (ev->filter != EVFILT_READ)
+			if (ev->filter != EVFILT_READ && ev->filter != EVFILT_VNODE &&
+				ev->filter != EVFILT_TIMER)
 				continue;
-			sep = (struct servtab *)ev->udata;
-			/* Paranoia */
-			if ((int)ev->ident != sep->se_fd)
-				continue;
-			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
-			if (sep->se_wait == 0 && sep->se_socktype == SOCK_STREAM) {
-				/* XXX here do the libwrap check-before-accept*/
-				ctrl = accept(sep->se_fd, NULL, NULL);
-				DPRINTF(SERV_FMT ": accept, ctrl fd %d",
-				    SERV_PARAMS(sep), ctrl);
-				if (ctrl < 0) {
-					if (errno != EINTR)
-						syslog(LOG_WARNING,
-						    SERV_FMT ": accept: %m",
-						    SERV_PARAMS(sep));
+			if (ev->ident == (uintptr_t) ctl_sock) {
+				struct sockaddr_un remote;
+				socklen_t t;
+				int s2 = accept(ctl_sock, (struct sockaddr *) &remote, &t);
+				FILE *fp;
+				if (s2 == -1) {
+					syslog(LOG_ERR, "accept: %s", strerror(errno));
 					continue;
 				}
-			} else
-				ctrl = sep->se_fd;
-			spawn(sep, ctrl);
+				int flags = fcntl(s2, F_GETFL, 0);
+				if (flags == -1)
+					perror("fcntl");
+				//flags |= O_NONBLOCK;
+				if (fcntl(s2, F_SETFL, flags) == -1)
+					perror("fcntl");
+				syslog(LOG_INFO, "reading from %s", inetd_ctrl_path);
+				if ((fp = fdopen(s2, "a+")) == NULL) {
+					syslog(LOG_ERR, "fdopen: %s", strerror(errno));
+					continue;
+				}
+
+				setvbuf(fp, NULL, _IONBF, 0);
+
+				handle_ctrl(fp);
+				fclose(fp);
+				close(s2);
+				continue;
+			}
+			sep = (struct servtab *)ev->udata;
+			/* Paranoia */
+			if ((int)ev->ident != sep->se_fd) {
+				syslog(LOG_ERR, "kevent ident does not match fd!");
+				continue;
+			}
+
+			int file_exists = access(sep->se_path, F_OK) == 0;
+			DPRINTF("path_exec_state is %d", sep->se_path_exec_state);
+			DPRINTF("file_exists: %d", file_exists);
+
+			update_exec_state(sep, false);
+
+			DPRINTF("new path_exec_state is %d", sep->se_path_exec_state);
+			DPRINTF("new file_exists: %d", file_exists);
+
+			if (sep->se_path_exec_state == SHOULD_KILL) {
+				kill(sep->se_path_pid, SIGTERM);
+				DPRINTF("killed process: %d", sep->se_path_pid);
+				continue;
+			} else if (sep->se_path_exec_state != AWAITING_EXEC &&
+				 sep->se_path_exec_state != IGNORE) {
+				DPRINTF("continuing bc not awaiting exec");
+				continue;
+			}
+
+			DPRINTF(SERV_FMT ": service requested" , SERV_PARAMS(sep));
+			spawns(sep);
 		}
 	}
+}
+
+static int 
+spawns(struct servtab *sep)
+{
+	int ctrl;
+	if (sep->se_wait == 0 && sep->se_socktype == SOCK_STREAM) {
+		/* XXX here do the libwrap check-before-accept*/
+		ctrl = accept(sep->se_fd, NULL, NULL);
+		DPRINTF(SERV_FMT ": accept, ctrl fd %d",
+		    SERV_PARAMS(sep), ctrl);
+		if (ctrl < 0) {
+			if (errno != EINTR)
+				syslog(LOG_WARNING,
+				    SERV_FMT ": accept: %m",
+				    SERV_PARAMS(sep));
+			return -1;
+		}
+	} else
+		ctrl = sep->se_fd;
+	spawn(sep, ctrl);
+	return 0;
 }
 
 static void
@@ -499,14 +586,22 @@ spawn(struct servtab *sep, int ctrl)
 			sleep(1);
 			return;
 		}
-		if (pid != 0 && sep->se_wait != 0) {
-			struct kevent	*ev;
+		if (pid != 0) {
+			if (sep->se_wait != 0) {
+				struct kevent	*ev;
 
-			sep->se_wait = pid;
-			ev = allocchange();
-			EV_SET(ev, sep->se_fd, EVFILT_READ,
-			    EV_DELETE, 0, 0, 0);
+				sep->se_wait = pid;
+				ev = allocchange();
+				EV_SET(ev, sep->se_fd, EVFILT_READ,
+					EV_DELETE, 0, 0, 0);
+			}
+			if (sep->se_path_exec_state != IGNORE) {
+				DPRINTF("setting pid to %d", pid);
+				sep->se_path_exec_state = RUNNING;
+				sep->se_path_pid = pid;
+			}
 		}
+
 		if (pid == 0) {
 			size_t	n;
 
@@ -636,6 +731,12 @@ run_service(int ctrl, struct servtab *sep, int didfork)
 		if (rlim_ofile.rlim_cur != rlim_ofile_cur &&
 		    setrlimit(RLIMIT_NOFILE, &rlim_ofile) < 0)
 			syslog(LOG_ERR, "setrlimit: %m");
+		if (sep->se_nice != SERVTAB_UNSPEC_NICE_VAL) {
+			if (setpriority(PRIO_PROCESS, 0, sep->se_nice) == -1) {
+				syslog(LOG_ERR, "setpriority: %s", strerror(errno));
+			}
+		}
+
 		execv(sep->se_server, sep->se_argv);
 		syslog(LOG_ERR, "cannot execute %s: %m", sep->se_server);
 	reject:
@@ -657,9 +758,25 @@ reapchild(void)
 		if (pid <= 0)
 			break;
 		DPRINTF("%d reaped, status %#x", pid, status);
-		for (sep = servtab; sep != NULL; sep = sep->se_next)
+		for (sep = servtab; sep != NULL; sep = sep->se_next) {
+			if (sep->se_path_pid == pid) {
+				sep->se_last_exit = status;
+				update_exec_state(sep, true);
+
+				if (sep->se_path_exec_state == AWAITING_EXEC) {
+					struct kevent	*ev;
+					ev = allocchange();
+					EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+						1, 1, (intptr_t)sep);
+					flush_changebuf();
+				}
+
+				DPRINTF("reapchild(): new path_exec_state is %d", sep->se_path_exec_state);
+			}
+
 			if (sep->se_wait == pid) {
 				struct kevent	*ev;
+
 
 				if (WIFEXITED(status) && WEXITSTATUS(status))
 					syslog(LOG_WARNING,
@@ -676,8 +793,10 @@ reapchild(void)
 				DPRINTF("restored %s, fd %d",
 				    sep->se_service, sep->se_fd);
 			}
+		}
 	}
 }
+
 
 static void
 retry(void)
@@ -740,6 +859,59 @@ setup(struct servtab *sep)
 	int		off = 0;
 #endif
 	struct kevent	*ev;
+	sep->se_last_exit = -1;
+
+	if (sep->se_path_state == SERVTAB_UNSPEC_VAL) {
+		sep->se_path_exec_state = IGNORE;
+		if (sep->se_successful_exit != SERVTAB_UNSPEC_VAL) {
+			// TODO: test for successful_exit being used with network
+			// services
+			sep->se_fd = ++ctrl_timer;
+			sep->se_path_exec_state = AWAITING_EXEC;
+			ev = allocchange();
+			EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+				1, 1, (intptr_t)sep);
+			flush_changebuf();
+		}
+	} else {
+		syslog(LOG_INFO, "setting up kevent for path state");
+		int fd = open(dirname(sep->se_path), O_DIRECTORY);
+		if (fd == -1) {
+			syslog(LOG_ERR, "open failed on %s: %s",
+					dirname(sep->se_path), strerror(errno));
+			return;
+		}
+
+		sep->se_fd = fd;
+		sep->se_path_exec_state = sep->se_path_state ? AWAITING_FILE_CREATION 
+			: AWAITING_FILE_DELETION;
+
+		int file_exists = access(sep->se_path, F_OK) == 0;
+		if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
+			syslog(LOG_INFO, "should_start %s", sep->se_path);
+			ev = allocchange();
+			EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+				1, 1, (intptr_t)sep);
+			sep->se_path_exec_state = AWAITING_EXEC;
+		}
+
+		ev = allocchange();
+		EV_SET(ev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE, 
+			0, (intptr_t)sep);
+		flush_changebuf();
+
+		file_exists = access(sep->se_path, F_OK) == 0;
+		if ((sep->se_path_state && file_exists) || (!sep->se_path_state && !file_exists)) {
+			syslog(LOG_INFO, "should_start %s", sep->se_path);
+			ev = allocchange();
+			EV_SET(ev, sep->se_fd, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+				1, 1, (intptr_t)sep);
+			sep->se_path_exec_state = AWAITING_EXEC;
+		}
+	} 
+
+	if (sep->se_type == GENERAL_TYPE)
+		return;
 
 	if ((sep->se_fd = socket(sep->se_family, sep->se_socktype, 0)) < 0) {
 		DPRINTF("socket failed on " SERV_FMT ": %s",
@@ -1600,18 +1772,33 @@ my_kevent(const struct kevent *changelist, size_t nchanges,
 	    NULL)) < 0)
 		if (errno != EINTR) {
 			syslog(LOG_ERR, "kevent: %m");
+		if (errno == EACCES) DPRINTF("EACCES");
+		if (errno == EBADF) DPRINTF("2");
+		if (errno == EFAULT) DPRINTF("3");
+		if (errno == EINTR) DPRINTF("4");
+		if (errno == EINVAL) DPRINTF("5");
+		if (errno == ENOENT) DPRINTF("6");
+		if (errno == ENOMEM) DPRINTF("7");
+		if (errno == EOPNOTSUPP) DPRINTF("8");
+		if (errno == ESRCH) DPRINTF("9");
 			exit(EXIT_FAILURE);
 		}
 
 	return (result);
 }
 
+static void
+flush_changebuf(void)
+{
+	(void) my_kevent(changebuf, changes, NULL, 0);
+	changes = 0;
+}
+
 static struct kevent *
 allocchange(void)
 {
 	if (changes == __arraycount(changebuf)) {
-		(void) my_kevent(changebuf, __arraycount(changebuf), NULL, 0);
-		changes = 0;
+		flush_changebuf();
 	}
 
 	return (&changebuf[changes++]);
@@ -1630,3 +1817,278 @@ try_biltin(struct servtab *sep)
 	}
 	return false;
 }
+
+static void
+update_exec_state(struct servtab *sep, bool killed)
+{
+	if (sep->se_path_exec_state == IGNORE)
+		return;
+	bool network_exec_permission = true;
+	if (sep->se_network_state && !get_network_state())
+		network_exec_permission = false;
+
+	if (sep->se_path_exec_state == AWAITING_EXEC && network_exec_permission)
+		return;
+
+	int exit_status = sep->se_last_exit;
+	/* tell whether successful_exit wants to start the service */
+	bool successful_exit = (sep->se_successful_exit && exit_status != 0) ||
+	 (!sep->se_successful_exit && exit_status == 0);
+
+	/* set in config() to run immediatley */
+	if (exit_status == -1)
+		successful_exit = true;
+
+	/* see whether path_state and successful_exit are specified */
+	bool successful_exit_spec = sep->se_successful_exit != SERVTAB_UNSPEC_VAL;
+	bool path_state_spec = sep->se_path_state != SERVTAB_UNSPEC_VAL;
+
+	if (killed) {
+		if (path_state_spec) {
+			if (sep->se_path_exec_state == SHOULD_KILL) {
+				/* if killed by inetd */
+				sep->se_path_exec_state = sep->se_path_state ? AWAITING_FILE_CREATION
+					: AWAITING_FILE_DELETION;
+				return;
+			} else {
+				sep->se_path_exec_state = EXITED_AFTER_FILE_EXEC;
+			}
+		}
+	} else if (!network_exec_permission) {
+		return;
+	}
+
+	if (successful_exit_spec && !successful_exit)
+		return;
+
+	if (path_state_spec) {
+		int file_exists = access(sep->se_path, F_OK) == 0;
+		if (sep->se_path_state) {
+			if (successful_exit_spec && file_exists && successful_exit) {
+				sep->se_path_exec_state = AWAITING_EXEC;
+				return;
+			}
+			if (!file_exists && sep->se_path_exec_state == EXITED_AFTER_FILE_EXEC)
+				sep->se_path_exec_state = AWAITING_FILE_CREATION;
+			if (file_exists && sep->se_path_exec_state == AWAITING_FILE_CREATION)
+				sep->se_path_exec_state = AWAITING_EXEC;
+			if (!file_exists && sep->se_path_exec_state == RUNNING)
+				sep->se_path_exec_state = SHOULD_KILL;
+		} else {
+			if (successful_exit_spec && !file_exists && successful_exit) {
+				sep->se_path_exec_state = AWAITING_EXEC;
+				return;
+			}
+			if (file_exists && sep->se_path_exec_state == EXITED_AFTER_FILE_EXEC)
+				sep->se_path_exec_state = AWAITING_FILE_DELETION;
+			if (!file_exists && sep->se_path_exec_state == AWAITING_FILE_DELETION)
+				sep->se_path_exec_state = AWAITING_EXEC;
+			if (file_exists && sep->se_path_exec_state == RUNNING)
+				sep->se_path_exec_state = SHOULD_KILL;
+		}
+	} else if (successful_exit && sep->se_path_exec_state != RUNNING) {
+		sep->se_path_exec_state = AWAITING_EXEC;
+	}
+}
+
+static bool
+get_network_state(void)
+{
+	struct ifaddrs *ifa, *ifai;
+	bool up = false;
+
+	if (getifaddrs(&ifa) == -1) {
+		syslog(LOG_ERR, "getifaddrs: %s", strerror(errno));
+		return false;
+	}
+
+	for (ifai = ifa; ifai; ifai = ifai->ifa_next) {
+		if (!(ifai->ifa_flags & IFF_UP)) {
+			continue;
+		}
+		if (ifai->ifa_flags & IFF_LOOPBACK) {
+			continue;
+		}
+		if (ifai->ifa_addr->sa_family != AF_INET && ifai->ifa_addr->sa_family != AF_INET6) {
+			continue;
+		}
+		up = true;
+		break;
+	}
+
+	freeifaddrs(ifa);
+
+	return up;
+}
+
+static int
+setup_inetdctl_sock(void)
+{
+	int s;
+	struct sockaddr_un local;
+
+	if ((s = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+		syslog(LOG_ERR, "socket: %s", strerror(errno));
+		return -1;
+	}
+
+	local.sun_family = AF_UNIX;
+	strcpy(local.sun_path, inetd_ctrl_path);
+	unlink(local.sun_path);
+	if (bind(s, (struct sockaddr *) &local, sizeof(local)) < 0) {
+		syslog(LOG_ERR, "bind: %s", strerror(errno));
+		return -1;
+	}
+
+	if (listen(s, 5) < 0) {
+		syslog(LOG_ERR, "listen: %s", strerror(errno));
+		return -1;
+	}
+
+	return s;
+}
+
+
+static struct servtab *
+find_servtab(char *arg)
+{
+	for (struct servtab *sep = servtab; sep != NULL; sep = sep->se_next)
+		if (strcmp(arg, sep->se_service) == 0)
+			return sep;
+	return NULL;
+}
+
+#define CPRINTF(fmt, ...) do {\
+	fprintf(fp, fmt "\n" __VA_OPT__(,) __VA_ARGS__);\
+} while (false)
+#define WIDTH 16
+
+static void
+print_status(FILE *fp, struct servtab *sep)
+{
+	CPRINTF("Status of " SERV_FMT, SERV_PARAMS(sep));
+	time_t rl_diff = rl_time() - sep->se_time;
+	if (sep->se_count != 0 && rl_diff != 0)
+		CPRINTF("process has been started %ld times in the last %ld seconds",
+		    sep->se_count, rl_diff);
+
+	if (sep->se_last_exit != -1)
+		CPRINTF("%*s: %d", WIDTH, "last exit", sep->se_last_exit);
+	else if (sep->se_path_pid != -1)
+		CPRINTF("%*s: %d", WIDTH, "pid", sep->se_path_pid);
+	else if (!(sep->se_wait < 1))
+		CPRINTF("%*s: %d", WIDTH, "pid", sep->se_wait);
+
+	
+	if (sep->se_path_exec_state != IGNORE) {
+		switch (sep->se_path_exec_state) {
+		case AWAITING_EXEC:
+			CPRINTF("%*s: about to execute", WIDTH, "path state");
+			break;
+		case AWAITING_FILE_CREATION:
+		case AWAITING_FILE_DELETION:
+		case EXITED_AFTER_FILE_EXEC:
+			if (sep->se_path_state)
+				CPRINTF("%*s: awaiting %s (re)creation", WIDTH,
+				    "path state", sep->se_path);
+			else
+				CPRINTF("%*s: awaiting %s (re)deletion", WIDTH,
+				    "path state", sep->se_path);
+			break;
+		case SHOULD_KILL:
+			CPRINTF("%*s: about to kill", WIDTH, "path state");
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+#define CTRL_STATUS	1
+#define CTRL_START	2 
+#define CTRL_STOP	3 
+#define CTRL_LOAD	4 
+#define CTRL_UNLOAD 	5
+#define CTRL_EXIT	6
+#define NEEDS_SEP(X) (X) == CTRL_STATUS || (X) == CTRL_START || \
+   (X) == CTRL_STOP
+
+static void
+handle_ctrl(FILE *fp)
+{
+	char *op = NULL, *arg = NULL;
+	size_t opbuflen = 0, argbuflen = 0;
+	ssize_t arglen, oplen;
+	struct servtab *sep;
+
+	//sleep(1);
+	while ((oplen = getline(&op, &opbuflen, fp)) > 0) {
+	//	sleep(1);
+		DPRINTF("line: %d", (int) op[0]);
+		if (op[0] == CTRL_EXIT) {
+			DPRINTF("saw exit, exiting now");
+			goto exit;
+		}
+		op[oplen - 1] = '\0';
+		if (op[0] == '\0') {
+			DPRINTF("exiting loop now");
+			goto exit;
+		}
+
+		DPRINTF("getting line");
+		arglen = getline(&arg, &argbuflen, fp);
+		arg[arglen - 1] = '\0';
+		DPRINTF("OP: %d, ARGLEN: %ld, ARG: %s", (int) op[0], arglen, arg);
+
+		if (NEEDS_SEP(op[0])) {
+			if (!(sep = find_servtab(arg))) {
+				DPRINTF("wrote to sock");
+				fprintf(fp, "No such service: %s\n", arg);
+				continue;
+			}
+			DPRINTF("got servtab");
+			switch (op[0]) {
+			case CTRL_STATUS:
+				print_status(fp, sep);
+				break;
+			case CTRL_START:
+				if (spawns(sep) != 0)
+					CPRINTF("cannot start process");
+				break;
+			case CTRL_STOP:
+				if (sep->se_path_pid != -1)
+					kill(sep->se_path_pid, SIGTERM);
+				else if (sep->se_wait != -1)
+					kill(sep->se_wait, SIGTERM);
+				break;
+			}
+		}
+
+		if (op[0] == CTRL_LOAD) {
+			const char *old_config = CONFIG;
+			struct servtab *old_start = sep = servtab;
+			servtab = NULL;
+			CONFIG = arg;
+			line_number = 0;
+
+			config_root();
+
+			while (sep->se_next) {
+				sep = sep->se_next;
+			}
+
+			sep->se_next = servtab;
+			servtab = old_start;
+
+			CONFIG = old_config;
+		}
+		fflush(fp);
+	}
+exit:
+	DPRINTF("exiting handle_ctrl");
+	fprintf(fp, "\n");
+	fflush(fp);
+	free(op);
+	free(arg);
+}
+

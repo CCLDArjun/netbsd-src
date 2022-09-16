@@ -88,7 +88,8 @@ typedef enum service_type {
 	NORM_TYPE = 0,
 	MUX_TYPE = 1,
 	MUXPLUS_TYPE = 2,
-	FAITH_TYPE = 3
+	FAITH_TYPE = 3,
+	GENERAL_TYPE = 4
 } service_type;
 
 #define ISMUXPLUS(sep)	((sep)->se_type == MUXPLUS_TYPE)
@@ -125,10 +126,27 @@ typedef enum service_type {
 
 /* "Unspecified" indicator value for servtabs (mainly used by v2 syntax) */
 #define SERVTAB_UNSPEC_VAL -1
+#define SERVTAB_UNSPEC_NICE_VAL INT_MAX /* not using -1 because it is valid
+                                           nice(1) value */
+
+/* to track files for services started by "path" in se_exec_path_state */
+typedef enum path_exec_state {
+	AWAITING_EXEC = 0,
+	AWAITING_FILE_CREATION = 1,
+	AWAITING_FILE_DELETION = 2,
+	EXITED_AFTER_FILE_EXEC = 3,
+	RUNNING = 4,
+	SHOULD_KILL = 5,
+	IGNORE = 6 // if ignore is set, don't base logic off of path_exec_state.
+} path_exec_state;
 
 #define SERVTAB_UNSPEC_SIZE_T SIZE_MAX
 
 #define SERVTAB_COUNT_MAX (SIZE_MAX - (size_t)1)
+
+/* "nice" range */
+#define NICE_MAX 20
+#define NICE_MIN -20
 
 /* Standard logging and debug print format for a servtab */
 #define SERV_FMT "%s/%s"
@@ -137,6 +155,7 @@ typedef enum service_type {
 /* rate limiting macros */
 #define	CNT_INTVL	((time_t)60)	/* servers in CNT_INTVL sec. */
 #define	RETRYTIME	(60*10)		/* retry after bind or server fail */
+
 
 struct	servtab {
 	char	*se_hostaddr;		/* host address to listen on */
@@ -149,6 +168,15 @@ struct	servtab {
 	int	se_rpcprog;		/* rpc program number */
 	int	se_rpcversl;		/* rpc program lowest version */
 	int	se_rpcversh;		/* rpc program highest version */
+	int se_nice;        /* nice(1) value */
+	char	*se_path;
+	int	se_path_state;
+	pid_t	se_path_pid; /* keep track of path service pid */
+	path_exec_state	se_path_exec_state;
+	int se_network_state;
+	int se_successful_exit;
+	int se_throttle_interval;
+	int se_last_exit; /* last exit status for se_successful_exit */
 #define isrpcservice(sep)	((sep)->se_rpcversl != 0)
 	pid_t	se_wait;		/* single threaded server */
 	short	se_checked;		/* looked at during merge */
@@ -267,6 +295,8 @@ extern char	*policy;
 
 int	rl_process(struct servtab *, int);
 void	rl_clear_ip_list(struct servtab *);
+time_t	rl_time(void);
+
 
 /*
  * From parse_v2.c

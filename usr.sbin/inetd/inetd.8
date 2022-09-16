@@ -87,6 +87,11 @@ Essentially,
 .Nm
 allows running one daemon to invoke several others,
 reducing load on the system.
+
+Additionally,
+.Nm
+has features which allow you to manage general daemons which don't
+necessarily depend on network sockets.
 .Pp
 The options available for
 .Nm :
@@ -561,11 +566,29 @@ Defaults to the global default setting.
 If specified without a value (i.e.,
 .Dq ipsec=, ) ,
 IPsec will be disabled for this service.
+Currently only one value is allowed, so all IPsec policies
+should be in a quoted string, separated by semicolons.
 See the
 .Sx Directives
 section for details.
-Currently only one value is allowed, so all IPsec policies
-should be in a quoted string, separated by semicolons.
+.It Sy network_state
+Polls for network. If yes is given, the program will be started only
+when the network is available.
+.It Sy nice
+Specify the
+.Xr nice 1 ,
+value of the daemon
+.It Sy path_state
+If yes is given, the daemon will be alive as long as the path exists.
+If no is given, the daemon will be alive for as long as the path does
+not exist.
+.It Sy path
+path for
+.Em path_state.
+Note: path_state must be specified
+.It Sy successful_exit
+if yes, the daemon will be restarted until it fails. if
+no, the daemon will be restarted until it succeeds.
 .El
 .Ss Directives
 <listen-addr>:
