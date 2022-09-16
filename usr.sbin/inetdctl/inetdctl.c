@@ -1,4 +1,5 @@
 /* $NetBSD: inetdctl.c,v 1.00 2022/07/15 09:41:53 tnn Exp $ */
+/* donated to the NetBSD project by Arjun Bemarkar as part of GSoC 2022 */
 
 /*
  * Copyright (c)
